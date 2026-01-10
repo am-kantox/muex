@@ -24,7 +24,7 @@ defmodule Mix.Tasks.Muex do
       mix muex --files "lib/my_module.ex"
 
       # Use specific mutators
-      mix muex --mutators arithmetic,comparison,boolean,literal
+      mix muex --mutators arithmetic,comparison,boolean,literal,function_call,conditional
 
       # Fail if mutation score below 80%
       mix muex --fail-at 80
@@ -116,7 +116,9 @@ defmodule Mix.Tasks.Muex do
       Muex.Mutator.Arithmetic,
       Muex.Mutator.Comparison,
       Muex.Mutator.Boolean,
-      Muex.Mutator.Literal
+      Muex.Mutator.Literal,
+      Muex.Mutator.FunctionCall,
+      Muex.Mutator.Conditional
     ]
   end
 
@@ -131,5 +133,7 @@ defmodule Mix.Tasks.Muex do
   defp get_mutator("comparison"), do: Muex.Mutator.Comparison
   defp get_mutator("boolean"), do: Muex.Mutator.Boolean
   defp get_mutator("literal"), do: Muex.Mutator.Literal
+  defp get_mutator("function_call"), do: Muex.Mutator.FunctionCall
+  defp get_mutator("conditional"), do: Muex.Mutator.Conditional
   defp get_mutator(other), do: Mix.raise("Unknown mutator: #{other}")
 end

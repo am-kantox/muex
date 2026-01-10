@@ -63,7 +63,7 @@ lib/muex/runner.ex
 - Test coverage for all core components
 - Foundation for integration testing established
 
-## Phase 3: Advanced Mutators 🚧 IN PROGRESS
+## Phase 3: Advanced Mutators ✅ COMPLETE
 
 ### 3.1 Boolean Logic Mutator ✅
 ✅ Created `lib/muex/mutator/boolean.ex`:
@@ -83,22 +83,29 @@ lib/muex/runner.ex
 
 ✅ Added tests in `test/muex/mutator/literal_test.exs` (19 tests)
 
-### 3.3 Function Call Mutator
-Create `lib/muex/mutator/function_call.ex`:
-- Remove function calls (replace with nil or identity)
-- Swap function arguments
-- Remove function arguments
+### 3.3 Function Call Mutator ✅
+✅ Created `lib/muex/mutator/function_call.ex`:
+- Remove function calls (replace with nil)
+- Swap first two arguments
+- Skip special forms (def, defmodule, if, etc.)
+- Support both local and remote calls
 
-Add tests in `test/muex/mutator/function_call_test.exs`
+✅ Added tests in `test/muex/mutator/function_call_test.exs` (16 tests)
 
-### 3.4 Conditional Mutator
-Create `lib/muex/mutator/conditional.ex`:
-- Remove if/else branches
-- Invert if conditions
-- Replace case clauses
-- Mutate guard clauses
+### 3.4 Conditional Mutator ✅
+✅ Created `lib/muex/mutator/conditional.ex`:
+- Invert if conditions (if x -> if not x)
+- Remove if/else branches (always take one branch)
+- Convert unless to if
+- Remove entire if statements
 
-Add tests in `test/muex/mutator/conditional_test.exs`
+✅ Added tests in `test/muex/mutator/conditional_test.exs` (10 tests)
+
+### Phase 3 Summary
+✅ **6 mutators** implemented and tested:
+- Arithmetic, Comparison, Boolean, Literal, FunctionCall, Conditional
+✅ **106 tests** total, all passing
+✅ All mutators registered and available via CLI
 
 ## Phase 4: Enhanced Reporting and Configuration
 

@@ -41,7 +41,7 @@ mix muex
 mix muex --files "lib/muex/*.ex"
 
 # Use specific mutators
-mix muex --mutators arithmetic,comparison
+mix muex --mutators arithmetic,comparison,boolean,literal,function_call,conditional
 
 # Set concurrency and timeout
 mix muex --concurrency 4 --timeout 10000
@@ -77,7 +77,13 @@ The codebase follows a language-agnostic plugin architecture with clear separati
 2. **`Muex.Mutator` behaviour** - Defines interface for mutation strategies
    - `mutate/2` - Generates mutations for an AST node
    - `name/0` and `description/0` - Metadata
-   - Built-in mutators: `Arithmetic`, `Comparison`
+   - Built-in mutators:
+     - `Arithmetic`: +/-, *//
+     - `Comparison`: ==, !=, >, <, >=, <=
+     - `Boolean`: and/or, &&/||, true/false, not
+     - `Literal`: numbers, strings, lists, atoms
+     - `FunctionCall`: remove calls, swap arguments
+     - `Conditional`: if/unless mutations
    - Uses `Macro.prewalk/3` to traverse AST and apply all registered mutators
 
 3. **`Muex.Loader`** - File discovery and parsing
@@ -182,6 +188,53 @@ end
 ```
 
 Register in `Mix.Tasks.Muex.get_mutators/1`.
+
+## Available Mutators
+
+### Arithmetic Mutator
+Mutates arithmetic operators:
+- `+` ↔ `-`
+- `*` ↔ `/`
+- `+` → `0` (remove addition)
+- `-` → `0` (remove subtraction)
+- `*` → `1` (identity)
+- `/` → `1` (identity)
+
+### Comparison Mutator
+Mutates comparison operators:
+- `==` ↔ `!=`
+- `>` ↔ `<`, `>` ↔ `>=`
+- `<` ↔ `>`, `<` ↔ `<=`
+- `>=` ↔ `<=`, `>=` ↔ `>`
+- `<=` ↔ `>=`, `<=` ↔ `<`
+- `===` ↔ `!==`
+
+### Boolean Mutator
+Mutates boolean operators and literals:
+- `and` ↔ `or`
+- `&&` ↔ `||`
+- `true` ↔ `false`
+- `not x` → `x` (remove negation)
+
+### Literal Mutator
+Mutates literal values:
+- Numbers: increment/decrement by 1
+- Strings: empty string, append character
+- Lists: mutate empty list
+- Atoms: change to different atom (except special atoms like `nil`, `:ok`, `:error`)
+
+### FunctionCall Mutator
+Mutates function calls:
+- Remove function call (replace with `nil`)
+- Swap first two arguments
+- Does not mutate special forms (def, defmodule, if, etc.)
+
+### Conditional Mutator
+Mutates conditional expressions:
+- Invert `if` conditions: `if x` → `if not x`
+- Remove branches: always take true/false branch
+- Convert `unless` to `if`
+- Remove entire `if` statement
 
 ## Testing Guidelines
 
