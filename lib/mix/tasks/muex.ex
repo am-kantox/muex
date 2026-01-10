@@ -39,6 +39,8 @@ defmodule Mix.Tasks.Muex do
 
   use Mix.Task
 
+  alias Muex.Reporter, as: R
+
   @shortdoc "Run mutation testing"
 
   @impl Mix.Task
@@ -150,17 +152,17 @@ defmodule Mix.Tasks.Muex do
   defp get_mutator(other), do: Mix.raise("Unknown mutator: #{other}")
 
   defp output_report(results, "json") do
-    Muex.Reporter.Json.generate(results)
+    R.Json.generate(results)
     Mix.shell().info("JSON report generated: muex-report.json")
   end
 
   defp output_report(results, "html") do
-    Muex.Reporter.Html.generate(results)
+    R.Html.generate(results)
     Mix.shell().info("HTML report generated: muex-report.html")
   end
 
   defp output_report(results, "terminal") do
-    Muex.Reporter.print_summary(results)
+    R.print_summary(results)
   end
 
   defp output_report(_results, other) do

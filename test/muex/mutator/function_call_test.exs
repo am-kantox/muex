@@ -61,6 +61,24 @@ defmodule Muex.Mutator.FunctionCallTest do
 
       assert [] = mutations
     end
+
+    test "does not mutate unless" do
+      ast = {:unless, [line: 1], [:condition, :body]}
+      context = %{file: "test.ex"}
+
+      mutations = FunctionCall.mutate(ast, context)
+
+      assert [] = mutations
+    end
+
+    test "does not mutate case" do
+      ast = {:case, [line: 1], [:expr, :clauses]}
+      context = %{file: "test.ex"}
+
+      mutations = FunctionCall.mutate(ast, context)
+
+      assert [] = mutations
+    end
   end
 
   describe "mutate/2 - remote function calls" do
@@ -98,6 +116,21 @@ defmodule Muex.Mutator.FunctionCallTest do
       assert [_, _] = mutations
       assert Enum.any?(mutations, &(&1.ast == nil))
     end
+
+    test "swaps arguments in remote function call with three arguments" do
+      ast = {{:., [], [List, :insert_at]}, [line: 8], [:list, :index, :value]}
+      context = %{file: "test.ex"}
+
+      mutations = FunctionCall.mutate(ast, context)
+
+      assert [_, _] = mutations
+      assert Enum.any?(mutations, &(&1.ast == nil))
+
+      assert Enum.any?(
+               mutations,
+               &(&1.ast == {{:., [], [List, :insert_at]}, [line: 8], [:index, :list, :value]})
+             )
+    end
   end
 
   describe "mutate/2 - metadata" do
@@ -113,6 +146,27 @@ defmodule Muex.Mutator.FunctionCallTest do
       assert mutation1.location.file == "lib/my_module.ex"
       assert mutation1.location.line == 10
       assert mutation2.mutator == Muex.Mutator.FunctionCall
+    end
+
+    test "produces correct description for remove mutation" do
+      ast = {:calculate, [line: 5], [:x, :y]}
+      context = %{file: "test.ex"}
+
+      mutations = FunctionCall.mutate(ast, context)
+
+      remove_mutation = Enum.find(mutations, &(&1.ast == nil))
+      assert remove_mutation.description == "FunctionCall: remove calculate() call"
+    end
+
+    test "produces correct description for swap mutation" do
+      ast = {:process, [line: 6], [:first, :second]}
+      context = %{file: "test.ex"}
+
+      mutations = FunctionCall.mutate(ast, context)
+
+      swap_mutation = Enum.find(mutations, &(&1.ast != nil))
+      assert swap_mutation.description == "FunctionCall: swap arguments in process()"
+      assert swap_mutation.ast == {:process, [line: 6], [:second, :first]}
     end
   end
 
@@ -144,6 +198,27 @@ defmodule Muex.Mutator.FunctionCallTest do
       context = %{}
 
       assert [] = FunctionCall.mutate(ast, context)
+    end
+
+    test "correctly identifies single argument calls for removal only" do
+      ast = {:validate, [line: 9], [:data]}
+      context = %{file: "test.ex"}
+
+      mutations = FunctionCall.mutate(ast, context)
+
+      assert [_] = mutations
+      assert Enum.all?(mutations, &(&1.ast == nil))
+    end
+
+    test "correctly handles four or more argument calls" do
+      ast = {:complex, [line: 10], [:a, :b, :c, :d]}
+      context = %{file: "test.ex"}
+
+      mutations = FunctionCall.mutate(ast, context)
+
+      assert [_, _] = mutations
+      assert Enum.any?(mutations, &(&1.ast == nil))
+      assert Enum.any?(mutations, &(&1.ast == {:complex, [line: 10], [:b, :a, :c, :d]}))
     end
   end
 

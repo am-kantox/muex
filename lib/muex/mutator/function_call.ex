@@ -16,10 +16,11 @@ defmodule Muex.Mutator.FunctionCall do
   def description, do: "Mutates function calls (remove calls, swap arguments)"
 
   @impl true
+  # credo:disable-for-lines:74
   def mutate(ast, context) do
     case ast do
       # Local function call with arguments: foo(a, b)
-      {func, meta, args} when is_atom(func) and is_list(args) and length(args) > 0 ->
+      {func, meta, args} when is_atom(func) and is_list(args) and args != [] ->
         line = Keyword.get(meta, :line, 0)
 
         # Don't mutate special forms or operators
@@ -55,8 +56,7 @@ defmodule Muex.Mutator.FunctionCall do
         end
 
       # Remote function call: Module.foo(a, b)
-      {{:., dot_meta, [module, func]}, meta, args}
-      when is_list(args) and length(args) > 0 ->
+      {{:., dot_meta, [module, func]}, meta, args} when is_list(args) and args != [] ->
         line = Keyword.get(meta, :line, 0)
         mutations = []
 

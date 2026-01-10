@@ -134,6 +134,72 @@ defmodule Muex.Mutator.LiteralTest do
 
       assert [] = mutations
     end
+
+    test "does not mutate true (handled by boolean mutator)" do
+      ast = true
+      context = %{file: "test.ex"}
+
+      mutations = Literal.mutate(ast, context)
+
+      assert [] = mutations
+    end
+
+    test "does not mutate false (handled by boolean mutator)" do
+      ast = false
+      context = %{file: "test.ex"}
+
+      mutations = Literal.mutate(ast, context)
+
+      assert [] = mutations
+    end
+  end
+
+  describe "mutate/2 - mutation descriptions" do
+    test "produces correct descriptions for number mutations" do
+      ast = 10
+      context = %{file: "test.ex"}
+
+      mutations = Literal.mutate(ast, context)
+
+      assert [mutation1, mutation2] = mutations
+      assert mutation1.description == "Literal: 10 to 11 (increment)"
+      assert mutation1.ast == 11
+      assert mutation2.description == "Literal: 10 to 9 (decrement)"
+      assert mutation2.ast == 9
+    end
+
+    test "produces correct descriptions for string mutations" do
+      ast = "test"
+      context = %{file: "test.ex"}
+
+      mutations = Literal.mutate(ast, context)
+
+      assert [mutation1, mutation2] = mutations
+      assert mutation1.description == "Literal: \"test\" to \"\" (empty string)"
+      assert mutation1.ast == ""
+      assert mutation2.description == "Literal: \"test\" to \"testx\" (append char)"
+      assert mutation2.ast == "testx"
+    end
+
+    test "produces correct description for empty list mutation" do
+      ast = []
+      context = %{file: "test.ex"}
+
+      [mutation] = Literal.mutate(ast, context)
+
+      assert mutation.description == "Literal: [] to [:mutated]"
+      assert mutation.ast == [:mutated]
+    end
+
+    test "produces correct description for atom mutation" do
+      ast = :custom
+      context = %{file: "test.ex"}
+
+      [mutation] = Literal.mutate(ast, context)
+
+      assert mutation.description == "Literal: :custom to :mutated_atom"
+      assert mutation.ast == :mutated_atom
+    end
   end
 
   describe "mutate/2 - edge cases" do

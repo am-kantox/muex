@@ -23,42 +23,38 @@ defmodule Muex.Language.Erlang do
 
   @impl true
   def unparse(ast) do
-    try do
-      # Convert Erlang AST back to source using erl_prettypr
-      source = :erl_prettypr.format(ast) |> to_string()
-      {:ok, source}
-    rescue
-      e -> {:error, e}
-    end
+    # Convert Erlang AST back to source using erl_prettypr
+    source = :erl_prettypr.format(ast) |> to_string()
+    {:ok, source}
+  rescue
+    e -> {:error, e}
   end
 
   @impl true
   def compile(source, module_name) do
-    try do
-      # Parse to forms
-      {:ok, tokens, _} = :erl_scan.string(String.to_charlist(source))
-      {:ok, forms} = :erl_parse.parse_form(tokens)
+    # Parse to forms
+    {:ok, tokens, _} = :erl_scan.string(String.to_charlist(source))
+    {:ok, forms} = :erl_parse.parse_form(tokens)
 
-      # Compile forms to binary
-      case :compile.forms([forms], [:binary, :return_errors]) do
-        {:ok, ^module_name, binary} ->
-          # Purge and load
-          :code.purge(module_name)
-          :code.delete(module_name)
+    # Compile forms to binary
+    case :compile.forms([forms], [:binary, :return_errors]) do
+      {:ok, ^module_name, binary} ->
+        # Purge and load
+        :code.purge(module_name)
+        :code.delete(module_name)
 
-          case :code.load_binary(module_name, ~c"nofile", binary) do
-            {:module, ^module_name} -> {:ok, module_name}
-            {:error, reason} -> {:error, reason}
-          end
+        case :code.load_binary(module_name, ~c"nofile", binary) do
+          {:module, ^module_name} -> {:ok, module_name}
+          {:error, reason} -> {:error, reason}
+        end
 
-        {:error, errors, _warnings} ->
-          {:error, errors}
-      end
-    rescue
-      e -> {:error, e}
-    catch
-      kind, reason -> {:error, {kind, reason}}
+      {:error, errors, _warnings} ->
+        {:error, errors}
     end
+  rescue
+    e -> {:error, e}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   @impl true

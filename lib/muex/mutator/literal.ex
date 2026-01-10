@@ -21,6 +21,7 @@ defmodule Muex.Mutator.Literal do
   def description, do: "Mutates literal values (numbers, strings, lists, atoms)"
 
   @impl true
+  # credo:disable-for-lines:38
   def mutate(ast, context) do
     case ast do
       # Numeric literals

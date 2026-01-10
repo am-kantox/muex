@@ -88,6 +88,43 @@ defmodule Muex.Mutator.ComparisonTest do
       assert Enum.any?(mutations, &(&1.ast == {:===, [line: 8], [:x, :y]}))
     end
 
+    test "produces correct mutation descriptions for strict equality" do
+      ast = {:===, [line: 9], [:a, :b]}
+      context = %{file: "test.ex"}
+
+      [mutation] = Comparison.mutate(ast, context)
+
+      assert mutation.description == "Comparison: === to !=="
+      assert mutation.ast == {:!==, [line: 9], [:a, :b]}
+    end
+
+    test "produces correct mutation descriptions for strict inequality" do
+      ast = {:!==, [line: 10], [:x, :y]}
+      context = %{file: "test.ex"}
+
+      [mutation] = Comparison.mutate(ast, context)
+
+      assert mutation.description == "Comparison: !== to ==="
+      assert mutation.ast == {:===, [line: 10], [:x, :y]}
+    end
+
+    test "produces correct mutations for all comparison operators" do
+      test_cases = [
+        {"==", :==, :!=},
+        {"!=", :!=, :==},
+        {"===", :===, :!==},
+        {"!==", :!==, :===}
+      ]
+
+      for {_name, op, expected_op} <- test_cases do
+        ast = {op, [line: 1], [:a, :b]}
+        context = %{file: "test.ex"}
+        mutations = Comparison.mutate(ast, context)
+        assert [_] = mutations
+        assert Enum.any?(mutations, &(&1.ast == {expected_op, [line: 1], [:a, :b]}))
+      end
+    end
+
     test "includes proper metadata in mutations" do
       ast = {:==, [line: 10], [:a, :b]}
       context = %{file: "lib/my_module.ex"}

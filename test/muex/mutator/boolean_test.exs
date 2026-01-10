@@ -74,6 +74,56 @@ defmodule Muex.Mutator.BooleanTest do
       assert Enum.any?(mutations, &(&1.ast == :x))
     end
 
+    test "removes negation with complex expression" do
+      ast = {:not, [line: 6], [{:>, [], [:a, :b]}]}
+      context = %{file: "test.ex"}
+
+      mutations = Boolean.mutate(ast, context)
+
+      assert [_] = mutations
+      assert Enum.any?(mutations, &(&1.ast == {:>, [], [:a, :b]}))
+    end
+
+    test "produces correct mutation descriptions for operator swaps" do
+      test_cases = [
+        {:and, :or, "Boolean: and to or"},
+        {:or, :and, "Boolean: or to and"},
+        {:&&, :||, "Boolean: && to ||"},
+        {:||, :&&, "Boolean: || to &&"}
+      ]
+
+      for {op, expected_op, expected_desc} <- test_cases do
+        ast = {op, [line: 1], [:a, :b]}
+        context = %{file: "test.ex"}
+        [mutation] = Boolean.mutate(ast, context)
+        assert mutation.description == expected_desc
+        assert mutation.ast == {expected_op, [line: 1], [:a, :b]}
+      end
+    end
+
+    test "produces correct mutation descriptions for literal swaps" do
+      ast_true = true
+      context = %{file: "test.ex"}
+      [mutation_true] = Boolean.mutate(ast_true, context)
+      assert mutation_true.description == "Boolean: true to false"
+      assert mutation_true.ast == false
+
+      ast_false = false
+      [mutation_false] = Boolean.mutate(ast_false, context)
+      assert mutation_false.description == "Boolean: false to true"
+      assert mutation_false.ast == true
+    end
+
+    test "produces correct mutation description for negation removal" do
+      ast = {:not, [line: 7], [:condition]}
+      context = %{file: "test.ex"}
+
+      [mutation] = Boolean.mutate(ast, context)
+
+      assert mutation.description == "Boolean: remove not (not x to x)"
+      assert mutation.ast == :condition
+    end
+
     test "includes proper metadata in mutations" do
       ast = {:and, [line: 10], [:a, :b]}
       context = %{file: "lib/my_module.ex"}
