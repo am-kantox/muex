@@ -65,7 +65,7 @@ jobs:
     steps:
       - name: Check all jobs status
         run: |
-             [ "${{ needs.linters.result }}" != "success" ] || \
+          if [ "${{ needs.linters.result }}" != "success" ] || \
              [ "${{ needs.test.result }}" != "success" ]; then
             echo "❌ Quality gate failed!"
             exit 1
