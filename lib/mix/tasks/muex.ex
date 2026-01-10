@@ -79,7 +79,7 @@ defmodule Mix.Tasks.Muex do
             m.location.file == file.path
           end)
 
-        if length(file_mutations) > 0 do
+        if match?([_ | _], file_mutations) do
           Muex.Runner.run_all(file_mutations, file, language_adapter,
             concurrency: concurrency,
             timeout_ms: timeout_ms

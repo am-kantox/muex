@@ -27,16 +27,14 @@ defmodule Muex.Language.Elixir do
 
   @impl true
   def compile(source, module_name) do
-    try do
-      [{^module_name, binary}] = Code.compile_string(source)
-      :code.purge(module_name)
-      {:module, ^module_name} = :code.load_binary(module_name, ~c"nofile", binary)
-      {:ok, module_name}
-    rescue
-      e -> {:error, e}
-    catch
-      kind, reason -> {:error, {kind, reason}}
-    end
+    [{^module_name, binary}] = Code.compile_string(source)
+    :code.purge(module_name)
+    {:module, ^module_name} = :code.load_binary(module_name, ~c"nofile", binary)
+    {:ok, module_name}
+  rescue
+    e -> {:error, e}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   @impl true

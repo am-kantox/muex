@@ -31,7 +31,7 @@ defmodule Muex.Runner do
   """
   @spec run_mutation(map(), map(), module(), keyword()) :: mutation_result()
   def run_mutation(mutation, file_entry, language_adapter, opts \\ []) do
-    _timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
+    timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
     start_time = System.monotonic_time(:millisecond)
 
     result =
@@ -41,12 +41,14 @@ defmodule Muex.Runner do
              file_entry.module_name,
              language_adapter
            ) do
-        {:ok, _module} ->
+        {:ok, {_module, original_binary}} ->
           # Run tests and check result
-          test_result = run_tests()
+          test_result =
+            Task.async(fn -> run_tests() end)
+            |> Task.await(timeout_ms)
 
           # Restore original module
-          Muex.Compiler.restore(file_entry.module_name, file_entry.path, language_adapter)
+          Muex.Compiler.restore(file_entry.module_name, original_binary)
 
           classify_test_result(test_result)
 
@@ -68,6 +70,10 @@ defmodule Muex.Runner do
       duration_ms: duration_ms,
       error: error
     }
+  rescue
+    e -> %{mutation: mutation, result: :timeout, duration_ms: 0, error: e}
+  catch
+    :exit, reason -> %{mutation: mutation, result: :timeout, duration_ms: 0, error: reason}
   end
 
   @doc """
@@ -102,16 +108,40 @@ defmodule Muex.Runner do
     end)
   end
 
-  # Run ExUnit tests - simplified for now
+  # Run ExUnit tests
   defp run_tests do
-    # This is a placeholder - actual implementation would:
-    # 1. Discover ExUnit tests
-    # 2. Run them programmatically
-    # 3. Capture results
-    # For now, return a mock result
-    {:ok, %{failures: 0, total: 10}}
+    # Find all test files
+    test_files = Path.wildcard("test/**/*_test.exs")
+
+    if Enum.empty?(test_files) do
+      {:error, :no_tests_found}
+    else
+      # Run ExUnit tests by executing mix test
+      # We use a separate process to isolate the test run
+      case System.cmd("mix", ["test", "--color"], stderr_to_stdout: true) do
+        {output, 0} ->
+          # Tests passed - mutation survived
+          {:ok, %{failures: 0, output: output}}
+
+        {output, _exit_code} ->
+          # Tests failed - mutation was killed
+          failures = count_failures(output)
+          {:ok, %{failures: failures, output: output}}
+      end
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  # Count the number of failures from test output
+  defp count_failures(output) do
+    case Regex.run(~r/(\d+) failures?/, output) do
+      [_, count] -> String.to_integer(count)
+      nil -> 1
+    end
   end
 
   defp classify_test_result({:ok, %{failures: 0}}), do: :survived
   defp classify_test_result({:ok, %{failures: _}}), do: :killed
+  defp classify_test_result({:error, _}), do: :invalid
 end
