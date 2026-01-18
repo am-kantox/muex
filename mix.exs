@@ -159,7 +159,7 @@ defmodule Muex.MixProject do
         Muex.Reporter,
         Muex.FileAnalyzer
       ],
-      "Utilities": [
+      Utilities: [
         Muex.TestDependency,
         Mix.Tasks.Muex
       ]
