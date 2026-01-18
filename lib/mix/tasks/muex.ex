@@ -194,7 +194,6 @@ defmodule Mix.Tasks.Muex do
       Muex.Mutator.Arithmetic,
       Muex.Mutator.Comparison,
       Muex.Mutator.Boolean,
-      Muex.Mutator.Literal,
       Muex.Mutator.FunctionCall,
       Muex.Mutator.Conditional
     ]
