@@ -19,6 +19,10 @@ defmodule Mix.Tasks.Muex do
     * `--max-mutations` - Maximum number of mutations to test (0 = unlimited, default: 0)
     * `--no-filter` - Disable intelligent file filtering
     * `--verbose` - Show file analysis details
+    * `--optimize` - Enable mutation optimization heuristics (default: disabled)
+    * `--optimize-level` - Optimization preset: conservative, balanced, aggressive (default: balanced)
+    * `--min-complexity` - Minimum complexity for mutations (default: 2, with --optimize)
+    * `--max-per-function` - Max mutations per function (default: 20, with --optimize)
 
   ## Examples
 
@@ -58,6 +62,15 @@ defmodule Mix.Tasks.Muex do
 
       # Generate HTML report
       mix muex --format html
+
+      # Enable mutation optimization (balanced preset)
+      mix muex --optimize
+
+      # Use aggressive optimization
+      mix muex --optimize --optimize-level aggressive
+
+      # Custom optimization settings
+      mix muex --optimize --min-complexity 3 --max-per-function 15
   """
   use Mix.Task
   alias Muex.Reporter, as: R
@@ -77,7 +90,11 @@ defmodule Mix.Tasks.Muex do
           min_score: :integer,
           max_mutations: :integer,
           no_filter: :boolean,
-          verbose: :boolean
+          verbose: :boolean,
+          optimize: :boolean,
+          optimize_level: :string,
+          min_complexity: :integer,
+          max_per_function: :integer
         ]
       )
 
@@ -91,6 +108,10 @@ defmodule Mix.Tasks.Muex do
     max_mutations = Keyword.get(opts, :max_mutations, 0)
     no_filter = Keyword.get(opts, :no_filter, false)
     verbose = Keyword.get(opts, :verbose, false)
+    optimize = Keyword.get(opts, :optimize, false)
+    optimize_level = Keyword.get(opts, :optimize_level, "balanced")
+    min_complexity = Keyword.get(opts, :min_complexity)
+    max_per_function = Keyword.get(opts, :max_per_function)
 
     Mix.shell().info("Loading files from #{path_pattern}...")
     {:ok, all_files} = Muex.Loader.load(path_pattern, language_adapter)
@@ -124,14 +145,31 @@ defmodule Mix.Tasks.Muex do
         Muex.Mutator.walk(file.ast, mutators, context)
       end)
       |> then(fn mutations ->
-        if max_mutations > 0 and length(mutations) > max_mutations do
+        optimized =
+          if optimize do
+            Mix.shell().info("Applying mutation optimization...")
+            optimizer_opts = get_optimizer_opts(optimize_level, min_complexity, max_per_function)
+            Muex.MutantOptimizer.optimize(mutations, optimizer_opts)
+          else
+            mutations
+          end
+
+        if optimize do
+          report = Muex.MutantOptimizer.optimization_report(mutations, optimized)
+          Mix.shell().info("Original mutations: #{report.original_count}")
+          Mix.shell().info("Optimized mutations: #{report.optimized_count}")
+          Mix.shell().info("Reduction: #{report.reduction} (-#{report.reduction_percentage}%)")
+          Mix.shell().info("Average impact score: #{report.average_impact_score}")
+        end
+
+        if max_mutations > 0 and length(optimized) > max_mutations do
           Mix.shell().info(
-            "Limiting to first #{max_mutations} mutations (from #{length(mutations)} total)"
+            "Limiting to first #{max_mutations} mutations (from #{length(optimized)} total)"
           )
 
-          Enum.take(mutations, max_mutations)
+          Enum.take(optimized, max_mutations)
         else
-          mutations
+          optimized
         end
       end)
 
@@ -247,5 +285,56 @@ defmodule Mix.Tasks.Muex do
 
   defp output_report(_results, other) do
     Mix.raise("Unknown format: #{other}. Use terminal, json, or html")
+  end
+
+  defp get_optimizer_opts(level, min_complexity_override, max_per_function_override) do
+    base_opts =
+      case level do
+        "conservative" ->
+          [
+            enabled: true,
+            min_complexity: 1,
+            max_mutations_per_function: 50,
+            cluster_similarity_threshold: 0.8,
+            keep_boundary_mutations: true
+          ]
+
+        "balanced" ->
+          [
+            enabled: true,
+            min_complexity: 2,
+            max_mutations_per_function: 20,
+            cluster_similarity_threshold: 0.8,
+            keep_boundary_mutations: true
+          ]
+
+        "aggressive" ->
+          [
+            enabled: true,
+            min_complexity: 3,
+            max_mutations_per_function: 10,
+            cluster_similarity_threshold: 0.8,
+            keep_boundary_mutations: true
+          ]
+
+        other ->
+          Mix.raise(
+            "Unknown optimization level: #{other}. Use conservative, balanced, or aggressive"
+          )
+      end
+
+    # Override with explicit flags if provided
+    base_opts =
+      if min_complexity_override do
+        Keyword.put(base_opts, :min_complexity, min_complexity_override)
+      else
+        base_opts
+      end
+
+    if max_per_function_override do
+      Keyword.put(base_opts, :max_mutations_per_function, max_per_function_override)
+    else
+      base_opts
+    end
   end
 end

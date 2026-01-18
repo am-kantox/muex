@@ -132,7 +132,8 @@ defmodule Muex.MixProject do
   defp extras do
     [
       "README.md",
-      "USAGE.md": [title: "Usage Guide"]
+      "USAGE.md": [title: "Usage Guide"],
+      "docs/MUTATION_OPTIMIZATION.md": [title: "Mutation Optimization"]
     ]
   end
 
@@ -157,7 +158,8 @@ defmodule Muex.MixProject do
         Muex.Loader,
         Muex.Runner,
         Muex.Reporter,
-        Muex.FileAnalyzer
+        Muex.FileAnalyzer,
+        Muex.MutantOptimizer
       ],
       Utilities: [
         Muex.TestDependency,

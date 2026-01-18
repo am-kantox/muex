@@ -21,6 +21,7 @@ Muex evaluates test suite quality by introducing deliberate bugs (mutations) int
   - Function calls (remove calls, swap arguments)
   - Conditionals (if/unless mutations)
 - Parallel mutation execution with configurable concurrency
+- Sophisticated mutation optimization heuristics (50-70% reduction)
 - Colored terminal output with mutation scores and detailed reports
 - Integration with ExUnit
 - Hot module swapping for efficient testing
@@ -94,7 +95,86 @@ mix muex --concurrency 4 --timeout 10000
 
 # Fail if mutation score below threshold
 mix muex --fail-at 80
+
+# Enable mutation optimization (balanced preset)
+mix muex --optimize
+
+# Use conservative optimization (best balance)
+mix muex --optimize --optimize-level conservative
+
+# Use aggressive optimization (fastest)
+mix muex --optimize --optimize-level aggressive
+
+# Custom optimization settings
+mix muex --optimize --min-complexity 3 --max-per-function 15
 ```
+
+## Mutation Optimization
+
+Muex includes sophisticated heuristics to reduce the number of mutants tested while maintaining mutation testing effectiveness. This can reduce testing time by 50-70% with minimal impact on mutation score.
+
+### When to Use Optimization
+
+- **CI/CD pipelines**: Use conservative mode for fast feedback with <1% score impact
+- **Development iteration**: Use balanced mode for rapid checks
+- **Pre-release validation**: Disable optimization for complete coverage
+
+### Optimization Levels
+
+**Conservative** (recommended for CI/CD):
+- 50-65% reduction in mutations
+- <1% impact on mutation score
+- Focuses on high-complexity code
+- Preserves boundary condition mutations
+
+```bash
+mix muex --optimize --optimize-level conservative
+```
+
+**Balanced** (default, good for development):
+- 70-85% reduction in mutations
+- 5-10% impact on mutation score
+- Fast feedback during development
+- Focuses on highest-impact mutations
+
+```bash
+mix muex --optimize
+```
+
+**Aggressive** (rapid checks only):
+- 85-95% reduction in mutations
+- 10-15% impact on mutation score
+- Very fast but may miss edge cases
+
+```bash
+mix muex --optimize --optimize-level aggressive
+```
+
+### How It Works
+
+The optimizer uses 7 strategies:
+
+1. **Equivalent Mutant Detection**: Filters semantically equivalent mutations
+2. **Code Complexity Scoring**: Skips mutations in trivial code (getters, simple guards)
+3. **Impact Scoring**: Prioritizes mutations by risk level (1-11 points)
+4. **Mutation Clustering**: Groups similar mutations and samples representatives
+5. **Per-Function Limits**: Caps mutations per function to prevent explosion
+6. **Boundary Prioritization**: Always preserves critical comparison mutations
+7. **Pattern-Based Filtering**: Removes known low-value mutations
+
+For detailed information, see [docs/MUTATION_OPTIMIZATION.md](docs/MUTATION_OPTIMIZATION.md).
+
+### Example: Cart Project
+
+Real-world results from the shopping cart example (440 LOC, 84 tests):
+
+| Mode | Mutations | Time | Score | Best For |
+|------|-----------|------|-------|----------|
+| Baseline | 886 | ~3 min | 99.77% | Final validation |
+| Conservative | 308 | ~1 min | 99.35% | CI/CD |
+| Balanced | 28 | ~10 sec | 89.29% | Development |
+
+See [examples/cart/OPTIMIZATION_RESULTS.md](examples/cart/OPTIMIZATION_RESULTS.md) for complete analysis.
 
 ## Available Mutators
 
@@ -190,8 +270,13 @@ mix muex --format html
 ## Examples
 
 See the `examples/` directory for example projects:
-- `examples/shop/` - Elixir shopping cart with comprehensive tests (48 tests covering realistic business logic)
-- `examples/calculator_ex/` - Simple Elixir calculator module
+- **`examples/cart/`** - Real-world e-commerce shopping cart (recommended)
+  - 440 LOC with complex business logic
+  - 84 comprehensive tests
+  - 99.77% baseline mutation score
+  - Demonstrates optimization heuristics
+  - See [examples/cart/README.md](examples/cart/README.md)
+- `examples/shop/` - Simpler shopping cart example (48 tests)
 - `examples/calculator.erl` - Basic Erlang example
 
 **Note**: The examples demonstrate the mutation testing concept. For production use, consider integrating Muex into your project's mix.exs as a dependency.
