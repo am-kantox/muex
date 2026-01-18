@@ -1,13 +1,6 @@
 defmodule Muex.Language.Erlang do
-  @moduledoc """
-  Language adapter for Erlang source code.
-
-  This adapter uses Erlang's built-in parsing modules (:erl_scan, :erl_parse, :erl_prettypr)
-  to parse, unparse, and compile Erlang source code.
-  """
-
+  @moduledoc "Language adapter for Erlang source code.\n\nThis adapter uses Erlang's built-in parsing modules (:erl_scan, :erl_parse, :erl_prettypr)\nto parse, unparse, and compile Erlang source code.\n"
   @behaviour Muex.Language
-
   @impl true
   def parse(source) do
     with {:ok, tokens, _} <- :erl_scan.string(String.to_charlist(source)),
@@ -23,7 +16,6 @@ defmodule Muex.Language.Erlang do
 
   @impl true
   def unparse(ast) do
-    # Convert Erlang AST back to source using erl_prettypr
     source = :erl_prettypr.format(ast) |> to_string()
     {:ok, source}
   rescue
@@ -32,14 +24,11 @@ defmodule Muex.Language.Erlang do
 
   @impl true
   def compile(source, module_name) do
-    # Parse to forms
     {:ok, tokens, _} = :erl_scan.string(String.to_charlist(source))
     {:ok, forms} = :erl_parse.parse_form(tokens)
 
-    # Compile forms to binary
     case :compile.forms([forms], [:binary, :return_errors]) do
       {:ok, ^module_name, binary} ->
-        # Purge and load
         :code.purge(module_name)
         :code.delete(module_name)
 
@@ -58,8 +47,12 @@ defmodule Muex.Language.Erlang do
   end
 
   @impl true
-  def file_extensions, do: [".erl"]
+  def file_extensions do
+    [".erl"]
+  end
 
   @impl true
-  def test_file_pattern, do: ~r/_test\.erl$/
+  def test_file_pattern do
+    ~r/_test\.erl$/
+  end
 end

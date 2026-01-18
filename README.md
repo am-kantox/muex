@@ -8,6 +8,11 @@ Muex evaluates test suite quality by introducing deliberate bugs (mutations) int
 
 - Language-agnostic architecture with pluggable language adapters
 - Built-in support for Elixir and Erlang
+- Intelligent file filtering to focus on business logic:
+  - Analyzes code complexity and characteristics
+  - Automatically excludes framework code (behaviours, protocols, supervisors)
+  - Skips low-complexity files (Mix tasks, reporters, configurations)
+  - Prioritizes files with testable logic (conditionals, arithmetic, pattern matching)
 - 6 mutation strategies:
   - Arithmetic operators (+/-, *//)
   - Comparison operators (==, !=, >, <, >=, <=)
@@ -40,12 +45,47 @@ Run mutation testing on your project:
 mix muex
 ```
 
-With options:
+By default, Muex intelligently filters files to focus on business logic and skip framework code. This dramatically reduces the number of mutations tested.
+
+### File Filtering Options
 
 ```bash
-# Run on specific files
+# Use intelligent filtering (default)
+mix muex
+
+# Show which files are included/excluded
+mix muex --verbose
+
+# Adjust minimum complexity score (default: 20)
+mix muex --min-score 30
+
+# Disable filtering to test all files
+mix muex --no-filter
+
+# Limit total mutations tested
+mix muex --max-mutations 500
+```
+
+### File Selection
+
+```bash
+# Run on specific directory
+mix muex --files "lib/myapp"
+
+# Run on specific file
 mix muex --files "lib/my_module.ex"
 
+# Run on files matching glob pattern (single level)
+mix muex --files "lib/muex/*.ex"
+
+# Run on files matching recursive glob pattern
+mix muex --files "lib/**/compiler*.ex"
+mix muex --files "lib/{muex,mix}/**/*.ex"
+```
+
+### Other Options
+
+```bash
 # Use specific mutators
 mix muex --mutators arithmetic,comparison,boolean
 
@@ -78,20 +118,37 @@ Both languages benefit from hot module swapping for efficient mutation testing.
 
 ```
 Loading files from lib...
-Found 3 file(s)
+Found 24 file(s)
+Analyzing files for mutation testing suitability...
+Selected 8 file(s) for mutation testing
+Skipped 16 file(s) (low complexity or framework code)
 Generating mutations...
-Generated 25 mutation(s)
+Testing 342 mutation(s)
+Analyzing test dependencies...
 Running tests...
 
 Mutation Testing Results
 ==================================================
-Total mutants: 25
-Killed: 20 (caught by tests)
-Survived: 5 (not caught by tests)
+Total mutants: 342
+Killed: 287 (caught by tests)
+Survived: 55 (not caught by tests)
 Invalid: 0 (compilation errors)
 Timeout: 0
 ==================================================
-Mutation Score: 80.0%
+Mutation Score: 83.9%
+```
+
+With `--verbose` flag:
+```
+Loading files from lib...
+Found 24 file(s)
+Analyzing files for mutation testing suitability...
+  ✗ lib/mix/tasks/muex.ex (Mix task)
+  ✗ lib/muex/application.ex (Application/Supervisor)
+  ✓ lib/muex/compiler.ex (score: 91)
+  ✓ lib/muex/runner.ex (score: 83)
+  ✗ lib/muex/language.ex (Behaviour definition)
+  ...
 ```
 
 ## Output Formats

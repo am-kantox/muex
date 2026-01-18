@@ -23,6 +23,7 @@ defmodule Muex.Reporter.Html do
     output_file = Keyword.get(opts, :output_file, "muex-report.html")
 
     html = build_html(results)
+
     File.write(output_file, html)
   end
 
@@ -44,110 +45,265 @@ defmodule Muex.Reporter.Html do
     <!DOCTYPE html>
     <html lang="en">
     <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Muex Mutation Testing Report</title>
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-            .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-            h1 { color: #333; margin-bottom: 30px; }
-            .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 30px; }
-            .summary-card { padding: 20px; border-radius: 6px; text-align: center; }
-            .summary-card.total { background: #e8f4f8; border-left: 4px solid #0084c7; }
-            .summary-card.killed { background: #e8f8e8; border-left: 4px solid #28a745; }
-            .summary-card.survived { background: #fff3cd; border-left: 4px solid #ffc107; }
-            .summary-card.invalid { background: #f8d7da; border-left: 4px solid #dc3545; }
-            .summary-card.timeout { background: #e8e8e8; border-left: 4px solid #6c757d; }
-            .summary-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #666; text-transform: uppercase; }
-            .summary-card .value { font-size: 32px; font-weight: bold; color: #333; }
-            .score { font-size: 48px; font-weight: bold; text-align: center; margin: 30px 0; color: #{score_color(mutation_score)}; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-            th { background: #f8f9fa; font-weight: 600; }
-            .status { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-            .status.killed { background: #d4edda; color: #155724; }
-            .status.survived { background: #fff3cd; color: #856404; }
-            .status.invalid { background: #f8d7da; color: #721c24; }
-            .status.timeout { background: #e2e3e5; color: #383d41; }
-            .location { font-family: monospace; font-size: 13px; color: #6c757d; }
-            .description { font-size: 14px; }
-        </style>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Muex Mutation Testing Report</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+          line-height: 1.6;
+          color: #333;
+          background: #f5f5f5;
+          padding: 20px;
+        }
+        .container {
+          max-width: 1200px;
+          margin: 0 auto;
+          background: white;
+          padding: 30px;
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+          color: #2c3e50;
+          margin-bottom: 30px;
+          padding-bottom: 15px;
+          border-bottom: 3px solid #3498db;
+        }
+        .summary {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 20px;
+          margin-bottom: 30px;
+        }
+        .summary-card {
+          padding: 20px;
+          border-radius: 6px;
+          text-align: center;
+        }
+        .summary-card.total { background: #ecf0f1; border-left: 4px solid #95a5a6; }
+        .summary-card.killed { background: #d5f4e6; border-left: 4px solid #27ae60; }
+        .summary-card.survived { background: #fadbd8; border-left: 4px solid #e74c3c; }
+        .summary-card.invalid { background: #fff4e6; border-left: 4px solid #f39c12; }
+        .summary-card.timeout { background: #e8daef; border-left: 4px solid #8e44ad; }
+        .summary-card.score {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+          border: none;
+          font-size: 1.2em;
+        }
+        .summary-number {
+          font-size: 2.5em;
+          font-weight: bold;
+          margin: 10px 0;
+        }
+        .summary-label {
+          font-size: 0.9em;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          opacity: 0.8;
+        }
+        .filters {
+          margin-bottom: 20px;
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .filter-btn {
+          padding: 8px 16px;
+          border: 2px solid #ddd;
+          background: white;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .filter-btn:hover { background: #f8f9fa; }
+        .filter-btn.active {
+          background: #3498db;
+          color: white;
+          border-color: #3498db;
+        }
+        .mutations {
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+        }
+        .mutation {
+          padding: 15px;
+          border-radius: 6px;
+          border-left: 4px solid;
+          background: #fafafa;
+        }
+        .mutation.killed { border-left-color: #27ae60; }
+        .mutation.survived { border-left-color: #e74c3c; }
+        .mutation.invalid { border-left-color: #f39c12; }
+        .mutation.timeout { border-left-color: #8e44ad; }
+        .mutation-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 10px;
+        }
+        .mutation-status {
+          padding: 4px 12px;
+          border-radius: 4px;
+          font-size: 0.85em;
+          font-weight: 600;
+          text-transform: uppercase;
+        }
+        .status-killed { background: #27ae60; color: white; }
+        .status-survived { background: #e74c3c; color: white; }
+        .status-invalid { background: #f39c12; color: white; }
+        .status-timeout { background: #8e44ad; color: white; }
+        .mutation-location {
+          font-family: 'Monaco', 'Courier New', monospace;
+          font-size: 0.9em;
+          color: #555;
+        }
+        .mutation-body {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .mutation-mutator {
+          color: #8e44ad;
+          font-weight: 600;
+          font-size: 0.9em;
+        }
+        .mutation-description {
+          color: #555;
+        }
+        .mutation-error {
+          background: #fff5f5;
+          border: 1px solid #feb2b2;
+          border-radius: 4px;
+          padding: 10px;
+          font-family: 'Monaco', 'Courier New', monospace;
+          font-size: 0.85em;
+          color: #c53030;
+          margin-top: 5px;
+        }
+        .hidden { display: none; }
+      </style>
     </head>
     <body>
-        <div class="container">
-            <h1>Mutation Testing Report</h1>
-            
-            <div class="summary">
-                <div class="summary-card total">
-                    <h3>Total</h3>
-                    <div class="value">#{total}</div>
-                </div>
-                <div class="summary-card killed">
-                    <h3>Killed</h3>
-                    <div class="value">#{killed}</div>
-                </div>
-                <div class="summary-card survived">
-                    <h3>Survived</h3>
-                    <div class="value">#{survived}</div>
-                </div>
-                <div class="summary-card invalid">
-                    <h3>Invalid</h3>
-                    <div class="value">#{invalid}</div>
-                </div>
-                <div class="summary-card timeout">
-                    <h3>Timeout</h3>
-                    <div class="value">#{timeout}</div>
-                </div>
-            </div>
-
-            <div class="score">
-                Mutation Score: #{mutation_score}%
-            </div>
-
-            <h2>Mutations</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Status</th>
-                        <th>Location</th>
-                        <th>Description</th>
-                        <th>Duration</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    #{Enum.map_join(results, "\n", &format_mutation_row/1)}
-                </tbody>
-            </table>
+      <div class="container">
+        <h1>Muex Mutation Testing Report</h1>
+        
+        <div class="summary">
+          <div class="summary-card total">
+            <div class="summary-label">Total Mutants</div>
+            <div class="summary-number">#{total}</div>
+          </div>
+          <div class="summary-card killed">
+            <div class="summary-label">Killed</div>
+            <div class="summary-number">#{killed}</div>
+          </div>
+          <div class="summary-card survived">
+            <div class="summary-label">Survived</div>
+            <div class="summary-number">#{survived}</div>
+          </div>
+          <div class="summary-card invalid">
+            <div class="summary-label">Invalid</div>
+            <div class="summary-number">#{invalid}</div>
+          </div>
+          <div class="summary-card timeout">
+            <div class="summary-label">Timeout</div>
+            <div class="summary-number">#{timeout}</div>
+          </div>
+          <div class="summary-card score">
+            <div class="summary-label">Mutation Score</div>
+            <div class="summary-number">#{mutation_score}%</div>
+          </div>
         </div>
+
+        <div class="filters">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="killed">Killed</button>
+          <button class="filter-btn" data-filter="survived">Survived</button>
+          <button class="filter-btn" data-filter="invalid">Invalid</button>
+          <button class="filter-btn" data-filter="timeout">Timeout</button>
+        </div>
+
+        <div class="mutations">
+          #{Enum.map(results, &format_mutation_html/1) |> Enum.join("\n")}
+        </div>
+      </div>
+
+      <script>
+        document.addEventListener('DOMContentLoaded', function() {
+          const filterBtns = document.querySelectorAll('.filter-btn');
+          const mutations = document.querySelectorAll('.mutation');
+
+          filterBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+              const filter = this.dataset.filter;
+              
+              filterBtns.forEach(b => b.classList.remove('active'));
+              this.classList.add('active');
+
+              mutations.forEach(mutation => {
+                if (filter === 'all' || mutation.classList.contains(filter)) {
+                  mutation.classList.remove('hidden');
+                } else {
+                  mutation.classList.add('hidden');
+                }
+              });
+            });
+          });
+        });
+      </script>
     </body>
     </html>
     """
   end
 
-  defp format_mutation_row(result) do
+  defp format_mutation_html(result) do
     mutation = result.mutation
-    status_class = Atom.to_string(result.result)
-    duration = Map.get(result, :duration_ms, 0)
+    status = Atom.to_string(result.result)
+    error = format_error_html(Map.get(result, :error))
 
     """
-        <tr>
-            <td><span class="status #{status_class}">#{status_class}</span></td>
-            <td class="location">#{escape_html(mutation.location.file)}:#{mutation.location.line}</td>
-            <td class="description">#{escape_html(mutation.description)}</td>
-            <td>#{duration}ms</td>
-        </tr>
+          <div class="mutation #{status}">
+            <div class="mutation-header">
+              <div class="mutation-location">#{mutation.location.file}:#{mutation.location.line}</div>
+              <div class="mutation-status status-#{status}">#{status}</div>
+            </div>
+            <div class="mutation-body">
+              <div class="mutation-mutator">#{format_mutator(mutation.mutator)}</div>
+              <div class="mutation-description">#{escape_html(mutation.description)}</div>
+              #{error}
+            </div>
+          </div>
     """
   end
 
-  defp score_color(score) when score >= 80, do: "#28a745"
-  defp score_color(score) when score >= 60, do: "#ffc107"
-  defp score_color(_score), do: "#dc3545"
+  defp format_mutator(mutator) do
+    mutator
+    |> Module.split()
+    |> List.last()
+  end
 
-  defp escape_html(text) do
+  defp format_error_html(nil), do: ""
+
+  defp format_error_html(error) do
+    """
+              <div class="mutation-error">#{escape_html(format_error(error))}</div>
+    """
+  end
+
+  defp format_error(error) when is_binary(error), do: error
+  defp format_error(error), do: inspect(error)
+
+  defp escape_html(text) when is_binary(text) do
     text
     |> String.replace("&", "&amp;")
     |> String.replace("<", "&lt;")
     |> String.replace(">", "&gt;")
     |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&#39;")
   end
+
+  defp escape_html(text), do: text
 end

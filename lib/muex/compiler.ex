@@ -1,32 +1,9 @@
 defmodule Muex.Compiler do
-  @moduledoc """
-  Compiles mutated ASTs and manages module hot-swapping.
-
-  Uses the language adapter for converting AST to source and compiling modules.
-  """
-
-  @doc """
-  Compiles a mutated AST and loads it into the BEAM.
-
-  ## Parameters
-
-    - `mutation` - The mutation map containing the mutated AST
-    - `original_ast` - The original (complete) AST with mutation applied
-    - `module_name` - The module name to compile
-    - `language_adapter` - The language adapter module
-
-  ## Returns
-
-    - `{:ok, {module, original_binary}}` - Successfully compiled and loaded module with original binary
-    - `{:error, reason}` - Compilation failed
-  """
-  @spec compile(map(), term(), atom(), module()) ::
-          {:ok, {module(), binary()}} | {:error, term()}
+  @moduledoc "Compiles mutated ASTs and manages module hot-swapping.\n\nUses the language adapter for converting AST to source and compiling modules.\n"
+  @doc "Compiles a mutated AST and loads it into the BEAM.\n\n## Parameters\n\n  - `mutation` - The mutation map containing the mutated AST\n  - `original_ast` - The original (complete) AST with mutation applied\n  - `module_name` - The module name to compile\n  - `language_adapter` - The language adapter module\n\n## Returns\n\n  - `{:ok, {module, original_binary}}` - Successfully compiled and loaded module with original binary\n  - `{:error, reason}` - Compilation failed\n"
+  @spec compile(map(), term(), atom(), module()) :: {:ok, {module(), binary()}} | {:error, term()}
   def compile(mutation, original_ast, module_name, language_adapter) do
-    # Store original module binary before mutating
     original_binary = get_module_binary(module_name)
-
-    # Replace the mutation point in the original AST
     mutated_full_ast = apply_mutation(original_ast, mutation)
 
     with {:ok, source} <- language_adapter.unparse(mutated_full_ast),
@@ -35,26 +12,22 @@ defmodule Muex.Compiler do
     end
   end
 
-  @doc """
-  Restores the original module from its binary.
+  @doc "Compiles a mutated AST and writes it to a temporary file.\n\nThis is used for port-based test execution where the mutated source\nneeds to be on disk for a separate BEAM VM to compile.\n\n## Parameters\n\n  - `mutation` - The mutation map containing the mutated AST\n  - `file_entry` - The file entry containing the original AST and path\n  - `language_adapter` - The language adapter module\n\n## Returns\n\n  - `{:ok, temp_file_path}` - Successfully wrote mutated source to temp file\n  - `{:error, reason}` - Failed to write mutated source\n"
+  @spec compile_to_file(map(), map(), module()) :: {:ok, Path.t()} | {:error, term()}
+  def compile_to_file(mutation, file_entry, language_adapter) do
+    mutated_full_ast = apply_mutation(file_entry.ast, mutation)
 
-  ## Parameters
+    with {:ok, source} <- language_adapter.unparse(mutated_full_ast) do
+      write_to_temp_file(source, file_entry.path)
+    end
+  end
 
-    - `module_name` - The module to restore
-    - `original_binary` - The original module binary
-
-  ## Returns
-
-    - `:ok` - Successfully restored
-    - `{:error, reason}` - Restoration failed
-  """
+  @doc "Restores the original module from its binary.\n\n## Parameters\n\n  - `module_name` - The module to restore\n  - `original_binary` - The original module binary\n\n## Returns\n\n  - `:ok` - Successfully restored\n  - `{:error, reason}` - Restoration failed\n"
   @spec restore(atom(), binary()) :: :ok | {:error, term()}
   def restore(module_name, original_binary) do
-    # Purge and delete the mutated module
     :code.purge(module_name)
     :code.delete(module_name)
 
-    # Reload the original module
     case :code.load_binary(module_name, ~c"nofile", original_binary) do
       {:module, ^module_name} -> :ok
       {:error, reason} -> {:error, reason}
@@ -63,7 +36,20 @@ defmodule Muex.Compiler do
     e -> {:error, e}
   end
 
-  # Get the current binary of a module
+  defp write_to_temp_file(source, original_path) do
+    dir = Path.dirname(original_path)
+    basename = Path.basename(original_path, Path.extname(original_path))
+    timestamp = System.system_time(:microsecond)
+    temp_file = Path.join(dir, "#{basename}_mutated_#{timestamp}#{Path.extname(original_path)}")
+
+    case File.write(temp_file, source) do
+      :ok -> {:ok, temp_file}
+      {:error, reason} -> {:error, reason}
+    end
+  rescue
+    e -> {:error, e}
+  end
+
   defp get_module_binary(module_name) do
     case :code.get_object_code(module_name) do
       {^module_name, binary, _filename} -> binary
@@ -71,16 +57,11 @@ defmodule Muex.Compiler do
     end
   end
 
-  # Compile source and load module with proper purging
   defp compile_and_load(source, module_name) do
-    # Purge existing module first
     :code.purge(module_name)
     :code.delete(module_name)
-
-    # Compile the source
     [{^module_name, binary}] = Code.compile_string(source)
 
-    # Load the new binary
     case :code.load_binary(module_name, ~c"nofile", binary) do
       {:module, ^module_name} -> {:ok, module_name}
       {:error, reason} -> {:error, reason}
@@ -91,41 +72,54 @@ defmodule Muex.Compiler do
     kind, reason -> {:error, {kind, reason}}
   end
 
-  # Apply mutation to the AST by walking and replacing the mutation point
   defp apply_mutation(ast, mutation) do
-    # Track if we've found and replaced the mutation
-    mutation_ast = Map.get(mutation, :ast)
+    original_ast = Map.get(mutation, :original_ast)
+    mutated_ast = Map.get(mutation, :ast)
     mutation_line = get_in(mutation, [:location, :line])
 
-    # Walk the AST and replace the matching node
     Macro.prewalk(ast, fn node ->
-      if matches_mutation?(node, mutation_ast, mutation_line) do
-        mutation_ast
+      if matches_mutation?(node, original_ast, mutation_line) do
+        mutated_ast
       else
         node
       end
     end)
   end
 
-  # Check if a node matches the mutation we're looking for
-  defp matches_mutation?(node, mutation_ast, mutation_line) do
-    # For now, match based on line number and node structure
-    # This is a simplified approach - in production we'd need more sophisticated matching
+  defp matches_mutation?(node, original_ast, mutation_line) do
     node_line = get_node_line(node)
-    node_line == mutation_line && structurally_similar?(node, mutation_ast)
+    node_line == mutation_line && structurally_equal?(node, original_ast)
   end
 
-  # Extract line number from AST node metadata
   defp get_node_line({_form, meta, _args}) when is_list(meta) do
     Keyword.get(meta, :line, 0)
   end
 
-  defp get_node_line(_), do: 0
-
-  # Check if two nodes are structurally similar (ignoring metadata)
-  defp structurally_similar?({form1, _meta1, args1}, {form2, _meta2, args2}) do
-    form1 == form2 && length(args1 || []) == length(args2 || [])
+  defp get_node_line(_) do
+    0
   end
 
-  defp structurally_similar?(_, _), do: false
+  defp structurally_equal?({form1, _meta1, args1}, {form2, _meta2, args2}) do
+    form1 == form2 && args_equal?(args1, args2)
+  end
+
+  defp structurally_equal?(val1, val2) do
+    val1 == val2
+  end
+
+  defp args_equal?(nil, nil) do
+    true
+  end
+
+  defp args_equal?([], []) do
+    true
+  end
+
+  defp args_equal?([h1 | t1], [h2 | t2]) do
+    structurally_equal?(h1, h2) && args_equal?(t1, t2)
+  end
+
+  defp args_equal?(_, _) do
+    false
+  end
 end
