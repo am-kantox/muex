@@ -1,8 +1,5 @@
 defmodule Cart.Product do
-  @moduledoc """
-  Product management with pricing, inventory, and validation.
-  """
-
+  @moduledoc "Product management with pricing, inventory, and validation.\n"
   defstruct [:id, :name, :price, :stock, :category, :weight, :taxable]
 
   @type t :: %__MODULE__{
@@ -14,7 +11,6 @@ defmodule Cart.Product do
           weight: float(),
           taxable: boolean()
         }
-
   @doc "Creates a new product with validation"
   def new(attrs) do
     with :ok <- validate_attrs(attrs),
@@ -29,7 +25,9 @@ defmodule Cart.Product do
     stock >= quantity
   end
 
-  def available?(_product, _quantity), do: false
+  def available?(_product, _quantity) do
+    false
+  end
 
   @doc "Calculates total price for quantity with bulk discount"
   def calculate_price(%__MODULE__{price: price}, quantity) when quantity > 0 do
@@ -54,14 +52,18 @@ defmodule Cart.Product do
     {:ok, %{product | stock: stock - quantity}}
   end
 
-  def reduce_stock(_product, _quantity), do: {:error, :insufficient_stock}
+  def reduce_stock(_product, _quantity) do
+    {:error, :insufficient_stock}
+  end
 
   @doc "Restores stock by quantity"
   def restore_stock(%__MODULE__{stock: stock} = product, quantity) when quantity > 0 do
     {:ok, %{product | stock: stock + quantity}}
   end
 
-  def restore_stock(_product, _quantity), do: {:error, :invalid_quantity}
+  def restore_stock(_product, _quantity) do
+    {:error, :invalid_quantity}
+  end
 
   @doc "Checks if product needs restock"
   def needs_restock?(%__MODULE__{stock: stock, category: category}) do
@@ -104,8 +106,6 @@ defmodule Cart.Product do
     end
   end
 
-  # Private validation functions
-
   defp validate_attrs(attrs) do
     required = [:id, :name, :price, :stock, :category, :weight, :taxable]
 
@@ -133,11 +133,21 @@ defmodule Cart.Product do
     end
   end
 
-  defp validate_stock(stock) when is_integer(stock) and stock >= 0, do: :ok
-  defp validate_stock(_), do: {:error, :invalid_stock}
+  defp validate_stock(stock) when is_integer(stock) and stock >= 0 do
+    :ok
+  end
 
-  defp validate_weight(weight) when is_float(weight) and weight > 0.0, do: :ok
-  defp validate_weight(_), do: {:error, :invalid_weight}
+  defp validate_stock(_) do
+    {:error, :invalid_stock}
+  end
+
+  defp validate_weight(weight) when is_float(weight) and weight > 0.0 do
+    :ok
+  end
+
+  defp validate_weight(_) do
+    {:error, :invalid_weight}
+  end
 
   defp validate_name(name) when is_binary(name) do
     if String.length(name) > 0 and String.length(name) <= 200 do
@@ -147,5 +157,7 @@ defmodule Cart.Product do
     end
   end
 
-  defp validate_name(_), do: {:error, :invalid_name}
+  defp validate_name(_) do
+    {:error, :invalid_name}
+  end
 end

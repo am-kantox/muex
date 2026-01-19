@@ -141,11 +141,13 @@ defmodule Muex.WorkerPool do
     new_results = [result | state.results]
     new_completed = state.completed_mutations + 1
 
-    # Print progress dot (only if Reporter module is available)
-    try do
-      Muex.Reporter.print_progress(result, new_completed, state.total_mutations)
-    rescue
-      UndefinedFunctionError -> :ok
+    # Print progress dot (only if verbose and Reporter module is available)
+    if Keyword.get(state.opts, :verbose, false) do
+      try do
+        Muex.Reporter.print_progress(result, new_completed, state.total_mutations)
+      rescue
+        UndefinedFunctionError -> :ok
+      end
     end
 
     new_state = %{

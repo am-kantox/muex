@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Muex do
     * `--min-score` - Minimum complexity score for files to include (default: 20)
     * `--max-mutations` - Maximum number of mutations to test (0 = unlimited, default: 0)
     * `--no-filter` - Disable intelligent file filtering
-    * `--verbose` - Show file analysis details
+    * `--verbose` - Show detailed progress information (file analysis, optimization, etc.)
     * `--optimize` - Enable mutation optimization heuristics (default: disabled)
     * `--optimize-level` - Optimization preset: conservative, balanced, aggressive (default: balanced)
     * `--min-complexity` - Minimum complexity for mutations (default: 2, with --optimize)
@@ -51,16 +51,19 @@ defmodule Mix.Tasks.Muex do
       # Limit total mutations to test
       mix muex --max-mutations 500
 
-      # Show file analysis details
+      # Show detailed progress information
       mix muex --verbose
 
       # Fail if mutation score below 80%
       mix muex --fail-at 80
 
-      # Generate JSON report
+      # Output JSON to terminal
       mix muex --format json
 
-      # Generate HTML report
+      # Output JSON with progress details
+      mix muex --format json --verbose
+
+      # Generate HTML report (writes to muex-report.html)
       mix muex --format html
 
       # Enable mutation optimization (balanced preset)
@@ -72,10 +75,13 @@ defmodule Mix.Tasks.Muex do
       # Custom optimization settings
       mix muex --optimize --min-complexity 3 --max-per-function 15
   """
+
   use Mix.Task
   alias Muex.Reporter, as: R
+
   @shortdoc "Run mutation testing"
   @impl Mix.Task
+  # credo:disable-for-lines:167
   def run(args) do
     {opts, _args, _invalid} =
       OptionParser.parse(args,
@@ -113,30 +119,48 @@ defmodule Mix.Tasks.Muex do
     min_complexity = Keyword.get(opts, :min_complexity)
     max_per_function = Keyword.get(opts, :max_per_function)
 
-    Mix.shell().info("Loading files from #{path_pattern}...")
+    format = Keyword.get(opts, :format, "terminal")
+
+    if verbose do
+      Mix.shell().info("Loading files from #{path_pattern}...")
+    end
+
     {:ok, all_files} = Muex.Loader.load(path_pattern, language_adapter)
-    Mix.shell().info("Found #{length(all_files)} file(s)")
+
+    if verbose do
+      Mix.shell().info("Found #{length(all_files)} file(s)")
+    end
 
     files =
       if no_filter do
-        Mix.shell().info("Skipping file filtering (--no-filter enabled)")
+        if verbose do
+          Mix.shell().info("Skipping file filtering (--no-filter enabled)")
+        end
+
         all_files
       else
-        Mix.shell().info("Analyzing files for mutation testing suitability...")
+        if verbose do
+          Mix.shell().info("Analyzing files for mutation testing suitability...")
+        end
 
         {included, excluded} =
           Muex.FileAnalyzer.filter_files(all_files, min_score: min_score, verbose: verbose)
 
         if verbose do
           Mix.shell().info("")
+          Mix.shell().info("Selected #{length(included)} file(s) for mutation testing")
+
+          Mix.shell().info(
+            "Skipped #{length(excluded)} file(s) (low complexity or framework code)"
+          )
         end
 
-        Mix.shell().info("Selected #{length(included)} file(s) for mutation testing")
-        Mix.shell().info("Skipped #{length(excluded)} file(s) (low complexity or framework code)")
         included
       end
 
-    Mix.shell().info("Generating mutations...")
+    if verbose do
+      Mix.shell().info("Generating mutations...")
+    end
 
     all_mutations =
       files
@@ -147,14 +171,17 @@ defmodule Mix.Tasks.Muex do
       |> then(fn mutations ->
         optimized =
           if optimize do
-            Mix.shell().info("Applying mutation optimization...")
+            if verbose do
+              Mix.shell().info("Applying mutation optimization...")
+            end
+
             optimizer_opts = get_optimizer_opts(optimize_level, min_complexity, max_per_function)
             Muex.MutantOptimizer.optimize(mutations, optimizer_opts)
           else
             mutations
           end
 
-        if optimize do
+        if optimize and verbose do
           report = Muex.MutantOptimizer.optimization_report(mutations, optimized)
           Mix.shell().info("Original mutations: #{report.original_count}")
           Mix.shell().info("Optimized mutations: #{report.optimized_count}")
@@ -163,9 +190,11 @@ defmodule Mix.Tasks.Muex do
         end
 
         if max_mutations > 0 and length(optimized) > max_mutations do
-          Mix.shell().info(
-            "Limiting to first #{max_mutations} mutations (from #{length(optimized)} total)"
-          )
+          if verbose do
+            Mix.shell().info(
+              "Limiting to first #{max_mutations} mutations (from #{length(optimized)} total)"
+            )
+          end
 
           Enum.take(optimized, max_mutations)
         else
@@ -173,11 +202,17 @@ defmodule Mix.Tasks.Muex do
         end
       end)
 
-    Mix.shell().info("Testing #{length(all_mutations)} mutation(s)")
-    Mix.shell().info("Analyzing test dependencies...")
+    if verbose do
+      Mix.shell().info("Testing #{length(all_mutations)} mutation(s)")
+      Mix.shell().info("Analyzing test dependencies...")
+    end
+
     dependency_map = Muex.DependencyAnalyzer.analyze("test")
     file_to_module = Map.new(files, fn file -> {file.path, file.module_name} end)
-    Mix.shell().info("Running tests...\n")
+
+    if verbose do
+      Mix.shell().info("Running tests...\n")
+    end
 
     results =
       Enum.flat_map(files, fn file ->
@@ -191,15 +226,15 @@ defmodule Mix.Tasks.Muex do
             dependency_map,
             file_to_module,
             max_workers: concurrency,
-            timeout_ms: timeout_ms
+            timeout_ms: timeout_ms,
+            verbose: verbose
           )
         else
           []
         end
       end)
 
-    format = Keyword.get(opts, :format, "terminal")
-    output_report(results, format)
+    output_report(results, format, verbose)
     total = length(results)
     killed = Enum.count(results, &(&1.result == :killed))
 
@@ -269,21 +304,24 @@ defmodule Mix.Tasks.Muex do
     Mix.raise("Unknown mutator: #{other}")
   end
 
-  defp output_report(results, "json") do
-    R.Json.generate(results)
-    Mix.shell().info("JSON report generated: muex-report.json")
+  defp output_report(results, "json", _verbose) do
+    json = R.Json.to_json(results)
+    Mix.shell().info(json)
   end
 
-  defp output_report(results, "html") do
+  defp output_report(results, "html", verbose) do
     R.Html.generate(results)
-    Mix.shell().info("HTML report generated: muex-report.html")
+
+    if verbose do
+      Mix.shell().info("HTML report generated: muex-report.html")
+    end
   end
 
-  defp output_report(results, "terminal") do
+  defp output_report(results, "terminal", _verbose) do
     R.print_summary(results)
   end
 
-  defp output_report(_results, other) do
+  defp output_report(_results, other, _verbose) do
     Mix.raise("Unknown format: #{other}. Use terminal, json, or html")
   end
 

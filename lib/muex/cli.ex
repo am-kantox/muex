@@ -96,31 +96,45 @@ defmodule Muex.CLI do
     optimize_level = Keyword.get(opts, :optimize_level, "balanced")
     min_complexity = Keyword.get(opts, :min_complexity)
     max_per_function = Keyword.get(opts, :max_per_function)
+    format = Keyword.get(opts, :format, "terminal")
 
-    IO.puts("Loading files from #{path_pattern}...")
+    if verbose do
+      IO.puts("Loading files from #{path_pattern}...")
+    end
+
     {:ok, all_files} = Muex.Loader.load(path_pattern, language_adapter)
-    IO.puts("Found #{length(all_files)} file(s)")
+
+    if verbose do
+      IO.puts("Found #{length(all_files)} file(s)")
+    end
 
     files =
       if no_filter do
-        IO.puts("Skipping file filtering (--no-filter enabled)")
+        if verbose do
+          IO.puts("Skipping file filtering (--no-filter enabled)")
+        end
+
         all_files
       else
-        IO.puts("Analyzing files for mutation testing suitability...")
+        if verbose do
+          IO.puts("Analyzing files for mutation testing suitability...")
+        end
 
         {included, excluded} =
           Muex.FileAnalyzer.filter_files(all_files, min_score: min_score, verbose: verbose)
 
         if verbose do
           IO.puts("")
+          IO.puts("Selected #{length(included)} file(s) for mutation testing")
+          IO.puts("Skipped #{length(excluded)} file(s) (low complexity or framework code)")
         end
 
-        IO.puts("Selected #{length(included)} file(s) for mutation testing")
-        IO.puts("Skipped #{length(excluded)} file(s) (low complexity or framework code)")
         included
       end
 
-    IO.puts("Generating mutations...")
+    if verbose do
+      IO.puts("Generating mutations...")
+    end
 
     all_mutations =
       files
@@ -131,14 +145,17 @@ defmodule Muex.CLI do
       |> then(fn mutations ->
         optimized =
           if optimize do
-            IO.puts("Applying mutation optimization...")
+            if verbose do
+              IO.puts("Applying mutation optimization...")
+            end
+
             optimizer_opts = get_optimizer_opts(optimize_level, min_complexity, max_per_function)
             Muex.MutantOptimizer.optimize(mutations, optimizer_opts)
           else
             mutations
           end
 
-        if optimize do
+        if optimize and verbose do
           report = Muex.MutantOptimizer.optimization_report(mutations, optimized)
           IO.puts("Original mutations: #{report.original_count}")
           IO.puts("Optimized mutations: #{report.optimized_count}")
@@ -147,9 +164,11 @@ defmodule Muex.CLI do
         end
 
         if max_mutations > 0 and length(optimized) > max_mutations do
-          IO.puts(
-            "Limiting to first #{max_mutations} mutations (from #{length(optimized)} total)"
-          )
+          if verbose do
+            IO.puts(
+              "Limiting to first #{max_mutations} mutations (from #{length(optimized)} total)"
+            )
+          end
 
           Enum.take(optimized, max_mutations)
         else
@@ -157,11 +176,17 @@ defmodule Muex.CLI do
         end
       end)
 
-    IO.puts("Testing #{length(all_mutations)} mutation(s)")
-    IO.puts("Analyzing test dependencies...")
+    if verbose do
+      IO.puts("Testing #{length(all_mutations)} mutation(s)")
+      IO.puts("Analyzing test dependencies...")
+    end
+
     dependency_map = Muex.DependencyAnalyzer.analyze("test")
     file_to_module = Map.new(files, fn file -> {file.path, file.module_name} end)
-    IO.puts("Running tests...\n")
+
+    if verbose do
+      IO.puts("Running tests...\n")
+    end
 
     results =
       Enum.flat_map(files, fn file ->
@@ -175,15 +200,15 @@ defmodule Muex.CLI do
             dependency_map,
             file_to_module,
             max_workers: concurrency,
-            timeout_ms: timeout_ms
+            timeout_ms: timeout_ms,
+            verbose: verbose
           )
         else
           []
         end
       end)
 
-    format = Keyword.get(opts, :format, "terminal")
-    output_report(results, format)
+    output_report(results, format, verbose)
     total = length(results)
     killed = Enum.count(results, &(&1.result == :killed))
 
@@ -241,21 +266,24 @@ defmodule Muex.CLI do
     System.halt(1)
   end
 
-  defp output_report(results, "json") do
-    R.Json.generate(results)
-    IO.puts("JSON report generated: muex-report.json")
+  defp output_report(results, "json", _verbose) do
+    json = R.Json.to_json(results)
+    IO.puts(json)
   end
 
-  defp output_report(results, "html") do
+  defp output_report(results, "html", verbose) do
     R.Html.generate(results)
-    IO.puts("HTML report generated: muex-report.html")
+
+    if verbose do
+      IO.puts("HTML report generated: muex-report.html")
+    end
   end
 
-  defp output_report(results, "terminal") do
+  defp output_report(results, "terminal", _verbose) do
     R.print_summary(results)
   end
 
-  defp output_report(_results, other) do
+  defp output_report(_results, other, _verbose) do
     IO.puts(:stderr, "Unknown format: #{other}. Use terminal, json, or html")
     System.halt(1)
   end
@@ -331,7 +359,7 @@ defmodule Muex.CLI do
         --min-score <score>         Minimum complexity score for files (default: 20)
         --max-mutations <n>         Maximum mutations to test (default: unlimited)
         --no-filter                 Disable intelligent file filtering
-        --verbose                   Show file analysis details
+        --verbose                   Show detailed progress information
         --optimize                  Enable mutation optimization
         --optimize-level <level>    Optimization: conservative, balanced, aggressive
         --min-complexity <n>        Minimum complexity for mutations (default: 2)
