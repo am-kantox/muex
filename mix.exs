@@ -18,6 +18,7 @@ defmodule Muex.MixProject do
       package: package(),
       docs: docs(),
       aliases: aliases(),
+      escript: escript(),
       test_coverage: [tool: ExCoveralls],
       dialyzer: [
         plt_file: {:no_warn, ".dialyzer/dialyzer.plt"},
@@ -48,6 +49,15 @@ defmodule Muex.MixProject do
         "coveralls.html": :test,
         "coveralls.json": :test
       ]
+    ]
+  end
+
+  def escript do
+    [
+      main_module: Muex.CLI,
+      name: "muex",
+      embed_elixir: true,
+      app: nil
     ]
   end
 
@@ -100,6 +110,8 @@ defmodule Muex.MixProject do
         README.md
         USAGE.md
         LICENSE
+        docs/INSTALLATION.md
+        docs/MUTATION_OPTIMIZATION.md
       ),
       licenses: ["GPL-3.0", "CC-BY-SA-4.0"],
       maintainers: ["Aleksei Matiushkin"],
@@ -133,6 +145,7 @@ defmodule Muex.MixProject do
     [
       "README.md",
       "USAGE.md": [title: "Usage Guide"],
+      "docs/INSTALLATION.md": [title: "Installation Guide"],
       "docs/MUTATION_OPTIMIZATION.md": [title: "Mutation Optimization"]
     ]
   end
@@ -163,6 +176,7 @@ defmodule Muex.MixProject do
       ],
       Utilities: [
         Muex.TestDependency,
+        Muex.CLI,
         Mix.Tasks.Muex
       ]
     ]

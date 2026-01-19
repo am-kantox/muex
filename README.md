@@ -28,23 +28,68 @@ Muex evaluates test suite quality by introducing deliberate bugs (mutations) int
 
 ## Installation
 
+Muex can be used in three ways:
+
+### 1. As a Mix Dependency (Recommended for CI/CD)
+
 Add `muex` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:muex, "~> 0.1.0"}
+    {:muex, "~> 0.2.0", only: [:dev, :test], runtime: false}
   ]
 end
 ```
+
+Then run:
+
+```bash
+mix deps.get
+mix muex
+```
+
+### 2. As a Hex Archive (Recommended for Global Use)
+
+Install globally to use across all your projects:
+
+```bash
+mix archive.install hex muex
+```
+
+This makes `mix muex` available in any Elixir project without adding it as a dependency.
+
+### 3. As an Escript (Standalone Binary)
+
+For standalone usage or distribution:
+
+```bash
+# From muex repository
+mix escript.build
+
+# Install system-wide
+sudo cp muex /usr/local/bin/
+
+# Use in any project
+cd /path/to/your/project
+muex
+```
+
+For detailed installation instructions and comparison, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## Usage
 
 Run mutation testing on your project:
 
 ```bash
+# Using mix task (dependency or hex archive)
 mix muex
+
+# Using escript (standalone binary)
+muex
 ```
+
+Both commands accept the same options and produce identical results.
 
 By default, Muex intelligently filters files to focus on business logic and skip framework code. This dramatically reduces the number of mutations tested.
 

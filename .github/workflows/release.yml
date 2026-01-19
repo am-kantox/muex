@@ -1,0 +1,215 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16'
+          otp-version: '26'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v3
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Install dependencies
+        run: mix deps.get --only prod
+
+      - name: Compile project
+        run: MIX_ENV=prod mix compile
+
+      - name: Build escript
+        run: MIX_ENV=prod mix escript.build
+
+      - name: Build hex archive
+        run: MIX_ENV=prod mix archive.build
+
+      - name: Verify artifacts
+        run: |
+          ls -lh muex muex-*.ez
+          ./muex --version
+          file muex
+          echo "Escript size: $(du -h muex | cut -f1)"
+          echo "Archive size: $(du -h muex-*.ez | cut -f1)"
+
+      - name: Generate checksums
+        run: |
+          sha256sum muex > muex.sha256
+          sha256sum muex-*.ez > muex-archive.sha256
+          cat muex.sha256
+          cat muex-archive.sha256
+
+      - name: Create release notes
+        id: release_notes
+        run: |
+          cat > RELEASE_NOTES.md << 'EOF'
+          ## Installation
+
+          ### Escript (Standalone Binary)
+
+          Download the `muex` binary and install it:
+
+          ```bash
+          # Download
+          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/muex
+          chmod +x muex
+
+          # Install system-wide
+          sudo mv muex /usr/local/bin/
+
+          # Verify
+          muex --version
+          ```
+
+          ### Hex Archive (Global Mix Task)
+
+          Install directly from Hex:
+
+          ```bash
+          mix archive.install hex muex
+          ```
+
+          Or download and install the archive:
+
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/muex-${{ steps.version.outputs.version }}.ez
+          mix archive.install muex-${{ steps.version.outputs.version }}.ez
+          ```
+
+          ### Mix Dependency
+
+          Add to your `mix.exs`:
+
+          ```elixir
+          def deps do
+            [
+              {:muex, "~> ${{ steps.version.outputs.version }}", only: [:dev, :test], runtime: false}
+            ]
+          end
+          ```
+
+          ## Usage
+
+          ```bash
+          # With escript
+          muex
+
+          # With hex archive or mix dependency
+          mix muex
+          ```
+
+          ## What's Changed
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for detailed changes.
+
+          ## Verification
+
+          Verify the downloaded files using SHA256 checksums:
+
+          ```bash
+          # Escript
+          sha256sum -c muex.sha256
+
+          # Archive
+          sha256sum -c muex-archive.sha256
+          ```
+
+          ## Documentation
+
+          - [Installation Guide](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/INSTALLATION.md)
+          - [Quick Start](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/QUICKSTART.md)
+          - [Usage Guide](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/USAGE.md)
+          - [API Documentation](https://hexdocs.pm/muex)
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            muex
+            muex-*.ez
+            muex.sha256
+            muex-archive.sha256
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-hex:
+    name: Publish to Hex.pm
+    runs-on: ubuntu-latest
+    needs: build
+    if: "!contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16'
+          otp-version: '26'
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v3
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Publish to Hex
+        run: mix hex.publish --yes
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+
+  notify:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [build, publish-hex]
+    if: always()
+    steps:
+      - name: Check release status
+        run: |
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "Build failed!"
+            exit 1
+          fi
+          
+          if [ "${{ needs.publish-hex.result }}" == "skipped" ]; then
+            echo "Hex publishing skipped (pre-release)"
+          elif [ "${{ needs.publish-hex.result }}" != "success" ]; then
+            echo "Hex publishing failed!"
+            exit 1
+          fi
+          
+          echo "Release completed successfully!"
+          echo "Download artifacts from: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
