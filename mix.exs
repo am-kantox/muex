@@ -105,7 +105,6 @@ defmodule Muex.MixProject do
       files: ~w(
         lib
         .formatter.exs
-        .dialyzer/ignore.exs
         mix.exs
         README.md
         USAGE.md
