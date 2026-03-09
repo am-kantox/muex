@@ -123,7 +123,8 @@ defmodule Muex.Config do
 
     with {:ok, language} <- resolve_language(Keyword.get(opts, :language, "elixir")),
          {:ok, mutators} <- resolve_mutators(Keyword.get(opts, :mutators)),
-         {:ok, optimize_level} <- validate_optimize_level(Keyword.get(opts, :optimize_level, "balanced")) do
+         {:ok, optimize_level} <-
+           validate_optimize_level(Keyword.get(opts, :optimize_level, "balanced")) do
       config = %__MODULE__{
         files: resolve_files(opts, app),
         test_paths: resolve_test_paths(opts, app),

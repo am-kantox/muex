@@ -12,11 +12,24 @@ defmodule Muex.CLI do
     {:ok, _} = Application.ensure_all_started(:jason)
 
     case args do
-      ["--help" | _] -> print_help(); System.halt(0)
-      ["-h" | _] -> print_help(); System.halt(0)
-      ["--version" | _] -> print_version(); System.halt(0)
-      ["-v" | _] -> print_version(); System.halt(0)
-      _ -> run_mutation_testing(args)
+      ["--help" | _] ->
+        print_help()
+        System.halt(0)
+
+      ["-h" | _] ->
+        print_help()
+        System.halt(0)
+
+      ["--version" | _] ->
+        print_version()
+        System.halt(0)
+
+      ["-v" | _] ->
+        print_version()
+        System.halt(0)
+
+      _ ->
+        run_mutation_testing(args)
     end
   end
 

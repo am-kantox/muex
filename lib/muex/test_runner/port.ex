@@ -4,6 +4,11 @@ defmodule Muex.TestRunner.Port do
 
   Each test run executes in a separate BEAM VM via port, providing complete isolation
   between mutations and preventing hot-swapping conflicts.
+
+  The worker pool deletes the .beam file for the mutated module before calling this
+  runner. `mix test` performs incremental compilation automatically, so only the
+  single mutated file is recompiled — no `compile --force` needed. This is critical
+  for umbrella projects where a forced recompile takes minutes per mutation.
   """
   @type test_result :: %{
           failures: non_neg_integer(),
@@ -28,16 +33,16 @@ defmodule Muex.TestRunner.Port do
   """
   @spec run_tests([Path.t()], Path.t() | nil, keyword()) ::
           {:ok, test_result()} | {:error, term()}
-  def run_tests(test_files, mutated_file \\ nil, opts \\ []) do
+  def run_tests(test_files, _mutated_file \\ nil, opts \\ []) do
     timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
     mix_env = Keyword.get(opts, :mix_env, "test")
     start_time = System.monotonic_time(:millisecond)
 
     result =
-      case spawn_test_port(test_files, mutated_file, mix_env, timeout_ms) do
+      case spawn_test_port(test_files, mix_env, timeout_ms) do
         {:ok, output, exit_code} ->
           duration_ms = System.monotonic_time(:millisecond) - start_time
-          failures = count_failures(output)
+          failures = count_failures(output, exit_code)
 
           {:ok,
            %{failures: failures, output: output, exit_code: exit_code, duration_ms: duration_ms}}
@@ -49,14 +54,12 @@ defmodule Muex.TestRunner.Port do
     result
   end
 
-  defp spawn_test_port(test_files, mutated_file, mix_env, timeout_ms) do
-    args =
-      if mutated_file do
-        test_args = test_files
-        ["do", "compile", "--force", ",", "test" | test_args]
-      else
-        ["test"] ++ test_files
-      end
+  defp spawn_test_port(test_files, mix_env, timeout_ms) do
+    # `mix test` does incremental compilation automatically. The worker pool
+    # already deleted the .beam file for the mutated module, so Mix will detect
+    # the changed source and recompile just that one module. Using `compile --force`
+    # here would recompile the entire project per mutation — catastrophic in umbrellas.
+    args = ["test" | test_files]
 
     current_env =
       System.get_env()
@@ -108,7 +111,13 @@ defmodule Muex.TestRunner.Port do
     :error, :badarg -> :ok
   end
 
-  defp count_failures(output) do
+  defp count_failures(_output, exit_code) when exit_code != 0 do
+    # Non-zero exit means tests failed or compilation errored — mutation killed.
+    # We still try to parse the actual failure count for reporting accuracy.
+    1
+  end
+
+  defp count_failures(output, _exit_code) do
     case Regex.run(~r/(\d+) failures?/, output) do
       [_, count] ->
         String.to_integer(count)
@@ -117,6 +126,7 @@ defmodule Muex.TestRunner.Port do
         if String.contains?(output, "0 failures") do
           0
         else
+          # No ExUnit output at all — something crashed. Treat as killed.
           1
         end
     end

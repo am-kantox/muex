@@ -86,13 +86,20 @@ defmodule Muex.ConfigTest do
     test "parses numeric options" do
       assert {:ok, config} =
                Config.from_args([
-                 "--concurrency", "8",
-                 "--timeout", "10000",
-                 "--fail-at", "80",
-                 "--min-score", "30",
-                 "--max-mutations", "500",
-                 "--min-complexity", "5",
-                 "--max-per-function", "10"
+                 "--concurrency",
+                 "8",
+                 "--timeout",
+                 "10000",
+                 "--fail-at",
+                 "80",
+                 "--min-score",
+                 "30",
+                 "--max-mutations",
+                 "500",
+                 "--min-complexity",
+                 "5",
+                 "--max-per-function",
+                 "10"
                ])
 
       assert config.concurrency == 8
@@ -141,9 +148,12 @@ defmodule Muex.ConfigTest do
     test "both --files and --test-paths override --app" do
       assert {:ok, config} =
                Config.from_args([
-                 "--app", "my_app",
-                 "--files", "custom/lib",
-                 "--test-paths", "custom/test,shared/test"
+                 "--app",
+                 "my_app",
+                 "--files",
+                 "custom/lib",
+                 "--test-paths",
+                 "custom/test,shared/test"
                ])
 
       assert config.files == "custom/lib"
