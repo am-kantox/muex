@@ -22,24 +22,34 @@ defmodule Muex.TestRunner.Port do
   ## Parameters
 
     - `test_files` - List of test file paths to execute
-    - `mutated_file` - Path to the mutated source file (will be compiled in the test env)
     - `opts` - Options:
       - `:timeout_ms` - Test timeout in milliseconds (default: 5000)
       - `:mix_env` - Mix environment (default: "test")
+      - `:cd` - Working directory for the port process (default: current dir).
+        When running inside a sandbox, this should be the sandbox root.
 
   ## Returns
 
     `{:ok, test_result}` or `{:error, reason}`
   """
-  @spec run_tests([Path.t()], Path.t() | nil, keyword()) ::
-          {:ok, test_result()} | {:error, term()}
-  def run_tests(test_files, _mutated_file \\ nil, opts \\ []) do
+  @spec run_tests([Path.t()], keyword()) :: {:ok, test_result()} | {:error, term()}
+  def run_tests(test_files, opts \\ []) do
     timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
     mix_env = Keyword.get(opts, :mix_env, "test")
+    cd = Keyword.get(opts, :cd)
     start_time = System.monotonic_time(:millisecond)
 
+    # When running from a sandbox, test file paths must be absolute
+    # since the port's cwd differs from the project root.
+    resolved_files =
+      if cd do
+        Enum.map(test_files, &Path.expand/1)
+      else
+        test_files
+      end
+
     result =
-      case spawn_test_port(test_files, mix_env, timeout_ms) do
+      case spawn_test_port(resolved_files, mix_env, timeout_ms, cd) do
         {:ok, output, exit_code} ->
           duration_ms = System.monotonic_time(:millisecond) - start_time
           failures = count_failures(output, exit_code)
@@ -54,11 +64,7 @@ defmodule Muex.TestRunner.Port do
     result
   end
 
-  defp spawn_test_port(test_files, mix_env, timeout_ms) do
-    # `mix test` does incremental compilation automatically. The worker pool
-    # already deleted the .beam file for the mutated module, so Mix will detect
-    # the changed source and recompile just that one module. Using `compile --force`
-    # here would recompile the entire project per mutation — catastrophic in umbrellas.
+  defp spawn_test_port(test_files, mix_env, timeout_ms, cd) do
     args = ["test" | test_files]
 
     current_env =
@@ -70,7 +76,10 @@ defmodule Muex.TestRunner.Port do
         [{~c"MIX_ENV", String.to_charlist(mix_env)}]
 
     cmd_args = Enum.map(args, &String.to_charlist/1)
-    port_opts = [:binary, :exit_status, :stderr_to_stdout, :hide, env: env, args: cmd_args]
+
+    port_opts =
+      [:binary, :exit_status, :stderr_to_stdout, :hide, env: env, args: cmd_args]
+      |> maybe_add_cd(cd)
 
     try do
       mix_path = System.find_executable("mix")
@@ -82,6 +91,9 @@ defmodule Muex.TestRunner.Port do
       kind, reason -> {:error, {kind, reason}}
     end
   end
+
+  defp maybe_add_cd(port_opts, nil), do: port_opts
+  defp maybe_add_cd(port_opts, cd), do: [{:cd, String.to_charlist(cd)} | port_opts]
 
   defp collect_output(port, acc, timeout_ms) do
     receive do

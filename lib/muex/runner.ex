@@ -67,27 +67,34 @@ defmodule Muex.Runner do
   end
 
   @doc """
-  Runs tests for all mutations in parallel using worker pool.
+  Runs all mutations in parallel using a global worker pool with sandbox isolation.
+
+  Mutations targeting different files run concurrently. Mutations targeting the
+  same file are serialized via per-file locking.
 
   ## Parameters
 
-    - `mutations` - List of mutations to test
-    - `file_entry` - The file entry containing the original AST
+    - `mutations` - List of all mutations to test (across all files)
+    - `file_entries` - Map of file paths to file entry maps
     - `language_adapter` - The language adapter module
     - `dependency_map` - Map of modules to test files
     - `file_to_module` - Map of file paths to module names
     - `opts` - Options:
       - `:max_workers` - Maximum concurrent workers (default: 4)
       - `:timeout_ms` - Test timeout in milliseconds (default: 5000)
+      - `:test_paths` - List of test path patterns (default: ["test"])
+      - `:verbose` - Show progress (default: false)
 
   ## Returns
 
     List of `mutation_result` maps
   """
-  @spec run_all([map()], map(), module(), map(), map(), keyword()) :: [mutation_result()]
+  @spec run_all([map()], %{Path.t() => map()}, module(), map(), map(), keyword()) :: [
+          mutation_result()
+        ]
   def run_all(
         mutations,
-        file_entry,
+        file_entries,
         language_adapter,
         dependency_map,
         file_to_module,
@@ -100,7 +107,7 @@ defmodule Muex.Runner do
       Muex.WorkerPool.run_mutations(
         pool,
         mutations,
-        file_entry,
+        file_entries,
         language_adapter,
         dependency_map,
         file_to_module,
