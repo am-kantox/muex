@@ -228,7 +228,18 @@ defmodule Muex.WorkerPool do
 
     test_files =
       if match?([], test_files) do
-        Path.wildcard("test/**/*_test.exs")
+        test_paths = Keyword.get(opts, :test_paths, ["test"])
+
+        test_paths
+        |> Enum.flat_map(fn path ->
+          cond do
+            String.contains?(path, ["*", "?"]) -> Path.wildcard(path)
+            File.dir?(path) -> Path.wildcard(Path.join([path, "**", "*_test.exs"]))
+            File.regular?(path) -> [path]
+            true -> Path.wildcard(path)
+          end
+        end)
+        |> Enum.uniq()
       else
         test_files
       end
