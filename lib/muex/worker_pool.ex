@@ -257,7 +257,9 @@ defmodule Muex.WorkerPool do
           module_name = file_entry.module_name
 
           if module_name do
-            beam_pattern = "_build/**/#{module_name}.beam"
+            # Elixir beam files are prefixed with "Elixir." on disk
+            beam_name = "Elixir.#{module_name}"
+            beam_pattern = "_build/**/#{beam_name}.beam"
             Path.wildcard(beam_pattern) |> Enum.each(&File.rm/1)
           end
 
