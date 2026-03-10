@@ -134,8 +134,10 @@ defmodule Muex.Sandbox do
     sandbox_path = Path.join(sandbox.root, original_path)
     project_path = Path.join(sandbox.project_root, original_path)
 
+    # Copy the original source back over the mutated file.
+    # (The app dir is a COW copy, not symlinks, so we overwrite in place.)
     File.rm(sandbox_path)
-    File.ln_s!(project_path, sandbox_path)
+    File.cp!(project_path, sandbox_path)
 
     :ok
   end
@@ -197,24 +199,20 @@ defmodule Muex.Sandbox do
     end)
   end
 
-  # Replace an app's directory symlink with a file-level mirror so that
-  # individual source files can be swapped with mutated copies.
+  # Replace an app's directory symlink with a COW copy so that individual
+  # source files can be overwritten with mutated copies. Using deep_copy
+  # (cp -Rc on macOS) is much faster than creating thousands of symlinks.
   defp ensure_app_mirrored(sandbox, app_name) do
     app_target = Path.join([sandbox.root, "apps", app_name])
+    app_source = Path.join([sandbox.project_root, "apps", app_name])
 
     case File.read_link(app_target) do
       {:ok, _link_target} ->
-        # It's a symlink to the real app dir — replace with mirror
         File.rm!(app_target)
-
-        mirror_source_tree(
-          sandbox.root,
-          sandbox.project_root,
-          Path.join("apps", app_name)
-        )
+        deep_copy(app_source, app_target)
 
       {:error, _} ->
-        # Already mirrored from a previous mutation
+        # Already a real copy from a previous mutation
         :ok
     end
   end
@@ -354,17 +352,24 @@ defmodule Muex.Sandbox do
     end
   end
 
+  # Use system cp with clone/reflink for copy-on-write when available (macOS APFS,
+  # Linux btrfs/xfs). Falls back to regular copy. This is orders of magnitude
+  # faster than recursive File.cp! for large directory trees.
   defp deep_copy(source, target) do
-    if File.dir?(source) do
-      File.mkdir_p!(target)
+    # macOS: -c enables clonefile (COW), -R recursive
+    # Linux: --reflink=auto for COW on btrfs/xfs
+    case :os.type() do
+      {:unix, :darwin} ->
+        {_, 0} = System.cmd("cp", ["-Rc", source, target])
 
-      source
-      |> File.ls!()
-      |> Enum.each(fn entry ->
-        deep_copy(Path.join(source, entry), Path.join(target, entry))
-      end)
-    else
-      File.cp!(source, target)
+      {:unix, _} ->
+        case System.cmd("cp", ["-R", "--reflink=auto", source, target], stderr_to_stdout: true) do
+          {_, 0} -> :ok
+          _ -> File.cp_r!(source, target)
+        end
+
+      _ ->
+        File.cp_r!(source, target)
     end
   end
 

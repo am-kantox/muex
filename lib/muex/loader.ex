@@ -20,6 +20,7 @@ defmodule Muex.Loader do
 
     {:ok, Enum.uniq_by(files, & &1.path)}
   end
+
   @doc """
   Loads source files from the given path pattern using the language adapter.
 
