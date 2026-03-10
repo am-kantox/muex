@@ -79,6 +79,7 @@ defmodule Muex.CLI do
         muex [OPTIONS]
     OPTIONS:
         --files <pattern>           Directory, file, or glob pattern (default: "lib")
+        --path <pattern>            Synonym for --files
         --app <name>               Target app in umbrella project
         --test-paths <paths>       Comma-separated test dirs/files/globs (default: "test")
         --language <lang>           Language adapter: elixir, erlang (default: elixir)
