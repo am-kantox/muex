@@ -208,12 +208,32 @@ defmodule Muex.Config do
   """
   @spec resolve_test_files(t()) :: [Path.t()]
   def resolve_test_files(%__MODULE__{test_paths: paths}) do
+    expand_test_paths(paths)
+  end
+
+  @doc """
+  Expands a list of test path entries into actual file paths on disk.
+
+  Each entry is treated as follows:
+    - Directory -> expands to `dir/**/*_test.exs`
+    - Glob pattern (contains `*` or `?`) -> expanded via `Path.wildcard/1`
+    - Regular file -> taken literally
+    - Other -> attempted as a wildcard pattern
+  """
+  @spec expand_test_paths([String.t()]) :: [Path.t()]
+  def expand_test_paths(paths) when is_list(paths) do
     paths
     |> Enum.flat_map(&expand_test_path/1)
     |> Enum.uniq()
   end
 
-  defp expand_test_path(path) do
+  @doc """
+  Expands a single test path entry into matching file paths.
+
+  Handles directories, glob patterns, regular files, and fallback wildcard.
+  """
+  @spec expand_test_path(String.t()) :: [Path.t()]
+  def expand_test_path(path) do
     cond do
       String.contains?(path, ["*", "?"]) ->
         Path.wildcard(path)
