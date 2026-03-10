@@ -4,6 +4,8 @@ defmodule Muex.Runner do
 
   Executes the test suite for each mutation and classifies the results.
   """
+
+  alias Muex.Config
   @type result :: :killed | :survived | :invalid | :timeout
   @type mutation_result :: %{
           mutation: map(),
@@ -110,17 +112,7 @@ defmodule Muex.Runner do
   end
 
   defp run_tests(test_paths) do
-    test_files =
-      test_paths
-      |> Enum.flat_map(fn path ->
-        cond do
-          String.contains?(path, ["*", "?"]) -> Path.wildcard(path)
-          File.dir?(path) -> Path.wildcard(Path.join([path, "**", "*_test.exs"]))
-          File.regular?(path) -> [path]
-          true -> Path.wildcard(path)
-        end
-      end)
-      |> Enum.uniq()
+    test_files = Config.expand_test_paths(test_paths)
 
     if Enum.empty?(test_files) do
       {:error, :no_tests_found}

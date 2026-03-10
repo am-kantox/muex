@@ -7,6 +7,8 @@ defmodule Muex.WorkerPool do
   """
   use GenServer
   require Logger
+
+  alias Muex.Config
   @default_max_workers 4
   defmodule State do
     @moduledoc false
@@ -229,17 +231,7 @@ defmodule Muex.WorkerPool do
     test_files =
       if match?([], test_files) do
         test_paths = Keyword.get(opts, :test_paths, ["test"])
-
-        test_paths
-        |> Enum.flat_map(fn path ->
-          cond do
-            String.contains?(path, ["*", "?"]) -> Path.wildcard(path)
-            File.dir?(path) -> Path.wildcard(Path.join([path, "**", "*_test.exs"]))
-            File.regular?(path) -> [path]
-            true -> Path.wildcard(path)
-          end
-        end)
-        |> Enum.uniq()
+        Config.expand_test_paths(test_paths)
       else
         test_files
       end
