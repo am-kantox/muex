@@ -82,7 +82,6 @@ defmodule Muex.DependencyAnalyzer do
     end
   end
 
-
   # Extract module dependencies from a test file
   defp extract_module_dependencies(test_file) do
     case File.read(test_file) do

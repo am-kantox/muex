@@ -34,6 +34,8 @@ defmodule Muex.WorkerPool do
       :caller,
       :total_mutations,
       :opts,
+      # Expanded test file paths (resolved once at run start)
+      test_paths: ["test"],
       # Map of file_path => :queue.queue(mutation)
       pending_by_file: %{},
       # MapSet of file paths currently being mutated
@@ -171,6 +173,7 @@ defmodule Muex.WorkerPool do
           language_adapter: language_adapter,
           dependency_map: dependency_map,
           file_to_module: file_to_module,
+          test_paths: test_paths,
           opts: opts,
           caller: from,
           results: [],
@@ -335,7 +338,8 @@ defmodule Muex.WorkerPool do
                   state.language_adapter,
                   state.dependency_map,
                   state.file_to_module,
-                  state.opts
+                  state.opts,
+                  state.test_paths
                 )
 
               send(parent, {:worker_done, worker_ref, result})
@@ -404,7 +408,8 @@ defmodule Muex.WorkerPool do
          language_adapter,
          dependency_map,
          file_to_module,
-         opts
+         opts,
+         test_paths
        ) do
     timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
     start_time = System.monotonic_time(:millisecond)
@@ -417,7 +422,6 @@ defmodule Muex.WorkerPool do
 
     test_files =
       if match?([], test_files) do
-        test_paths = Keyword.get(opts, :test_paths, ["test"])
         Config.expand_test_paths(test_paths)
       else
         test_files
