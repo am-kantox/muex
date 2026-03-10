@@ -31,6 +31,7 @@ defmodule Muex.Mutator do
   """
   @type mutation :: %{
           ast: term(),
+          original_ast: term(),
           mutator: module(),
           description: String.t(),
           location: %{file: String.t(), line: non_neg_integer()}
@@ -81,7 +82,12 @@ defmodule Muex.Mutator do
   def walk(ast, mutators, context) do
     {_ast, mutations} =
       Macro.prewalk(ast, [], fn node, acc ->
-        node_mutations = Enum.flat_map(mutators, fn mutator -> mutator.mutate(node, context) end)
+        node_mutations =
+          Enum.flat_map(mutators, fn mutator ->
+            mutator.mutate(node, context)
+            |> Enum.map(fn mutation -> Map.put(mutation, :original_ast, node) end)
+          end)
+
         {node, acc ++ node_mutations}
       end)
 
