@@ -18,6 +18,13 @@ defmodule Muex.WorkerPool do
   use GenServer
   require Logger
 
+  alias Muex.Compiler
+  alias Muex.Config
+  alias Muex.DependencyAnalyzer
+  alias Muex.Reporter
+  alias Muex.Sandbox
+  alias Muex.TestRunner.Port, as: PortRunner
+
   @default_max_workers 4
 
   defmodule State do
@@ -139,7 +146,7 @@ defmodule Muex.WorkerPool do
       test_paths = Keyword.get(opts, :test_paths, ["test"])
 
       sandboxes =
-        Muex.Sandbox.create_pool(state.max_workers,
+        Sandbox.create_pool(state.max_workers,
           project_root: File.cwd!(),
           test_paths: test_paths
         )
@@ -196,7 +203,7 @@ defmodule Muex.WorkerPool do
     # Print progress
     if Keyword.get(state.opts, :verbose, false) do
       try do
-        Muex.Reporter.print_progress(result, new_completed, state.total_mutations)
+        Reporter.print_progress(result, new_completed, state.total_mutations)
       rescue
         UndefinedFunctionError -> :ok
       end
@@ -233,7 +240,7 @@ defmodule Muex.WorkerPool do
 
     # Check if all done
     if map_size(new_state.active_workers) == 0 and all_queues_empty?(new_state.pending_by_file) do
-      Muex.Sandbox.cleanup(new_state.sandboxes)
+      Sandbox.cleanup(new_state.sandboxes)
       GenServer.reply(new_state.caller, Enum.reverse(new_state.results))
       {:noreply, %{new_state | caller: nil}}
     else
@@ -288,7 +295,7 @@ defmodule Muex.WorkerPool do
 
         if map_size(new_state.active_workers) == 0 and
              all_queues_empty?(new_state.pending_by_file) do
-          Muex.Sandbox.cleanup(new_state.sandboxes)
+          Sandbox.cleanup(new_state.sandboxes)
           GenServer.reply(new_state.caller, Enum.reverse(new_state.results))
           {:noreply, %{new_state | caller: nil}}
         else
@@ -406,25 +413,25 @@ defmodule Muex.WorkerPool do
 
     # Resolve test files for this mutation
     test_files =
-      Muex.DependencyAnalyzer.get_tests_for_mutation(mutation, dependency_map, file_to_module)
+      DependencyAnalyzer.get_tests_for_mutation(mutation, dependency_map, file_to_module)
 
     test_files =
       if match?([], test_files) do
         test_paths = Keyword.get(opts, :test_paths, ["test"])
-        Muex.Config.expand_test_paths(test_paths)
+        Config.expand_test_paths(test_paths)
       else
         test_files
       end
 
     result =
-      case Muex.Compiler.compile_to_file(mutation, file_entry, language_adapter) do
+      case Compiler.compile_to_file(mutation, file_entry, language_adapter) do
         {:ok, mutated_file} ->
           {:ok, mutated_source} = File.read(mutated_file)
           File.rm!(mutated_file)
 
           # Apply the mutation to the sandbox (not the real project)
           :ok =
-            Muex.Sandbox.apply_mutation(
+            Sandbox.apply_mutation(
               sandbox,
               file_path,
               mutated_source,
@@ -433,10 +440,10 @@ defmodule Muex.WorkerPool do
 
           # Run tests from the sandbox directory
           test_result =
-            Muex.TestRunner.Port.run_tests(test_files, timeout_ms: timeout_ms, cd: sandbox.root)
+            PortRunner.run_tests(test_files, timeout_ms: timeout_ms, cd: sandbox.root)
 
           # Restore the sandbox for the next mutation
-          Muex.Sandbox.restore(sandbox, file_path)
+          Sandbox.restore(sandbox, file_path)
 
           classify_test_result(test_result)
 
@@ -467,7 +474,7 @@ defmodule Muex.WorkerPool do
   @impl true
   def terminate(_reason, state) do
     if state.sandboxes != [] do
-      Muex.Sandbox.cleanup(state.sandboxes)
+      Sandbox.cleanup(state.sandboxes)
     end
 
     :ok
