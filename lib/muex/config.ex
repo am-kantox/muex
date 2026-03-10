@@ -57,7 +57,7 @@ defmodule Muex.Config do
   """
 
   @type t :: %__MODULE__{
-          files: String.t(),
+          files: [String.t()],
           test_paths: [String.t()],
           app: String.t() | nil,
           language: module(),
@@ -280,9 +280,17 @@ defmodule Muex.Config do
     explicit = Keyword.get(opts, :files) || Keyword.get(opts, :path)
 
     cond do
-      explicit -> explicit
-      app -> Path.join(["apps", app, "lib"])
-      true -> "lib"
+      explicit ->
+        explicit
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+
+      app ->
+        [Path.join(["apps", app, "lib"])]
+
+      true ->
+        ["lib"]
     end
   end
 

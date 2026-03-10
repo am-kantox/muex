@@ -6,6 +6,20 @@ defmodule Muex.Loader do
   unwanted patterns, and parses them into ASTs using the provided language adapter.
   """
   @type file_entry :: %{path: String.t(), ast: term(), module_name: atom() | nil}
+
+  @doc """
+  Loads source files from multiple path patterns.
+  """
+  @spec load_all([String.t()], module(), keyword()) :: {:ok, [file_entry()]} | {:error, term()}
+  def load_all(path_patterns, language_adapter, opts \\ []) do
+    files =
+      Enum.flat_map(path_patterns, fn pattern ->
+        {:ok, entries} = load(pattern, language_adapter, opts)
+        entries
+      end)
+
+    {:ok, Enum.uniq_by(files, & &1.path)}
+  end
   @doc """
   Loads source files from the given path pattern using the language adapter.
 

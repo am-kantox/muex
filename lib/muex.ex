@@ -80,9 +80,9 @@ defmodule Muex do
   """
   @spec run(Muex.Config.t()) :: {:ok, map()} | {:error, String.t()}
   def run(%Muex.Config{} = config) do
-    log("Loading files from #{config.files}...", config.verbose)
+    log("Loading files from #{Enum.join(config.files, ", ")}...", config.verbose)
 
-    case Muex.Loader.load(config.files, config.language) do
+    case Muex.Loader.load_all(config.files, config.language) do
       {:ok, []} ->
         {:ok, %{results: [], score: 0.0}}
 
