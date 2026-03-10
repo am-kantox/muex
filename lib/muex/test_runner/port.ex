@@ -39,14 +39,10 @@ defmodule Muex.TestRunner.Port do
     cd = Keyword.get(opts, :cd)
     start_time = System.monotonic_time(:millisecond)
 
-    # When running from a sandbox, test file paths must be absolute
-    # since the port's cwd differs from the project root.
-    resolved_files =
-      if cd do
-        Enum.map(test_files, &Path.expand/1)
-      else
-        test_files
-      end
+    # When running from a sandbox, test paths are relative and resolve
+    # correctly against the port's :cd option. Do NOT expand them against
+    # the caller's cwd — that would bypass sandbox isolation.
+    resolved_files = test_files
 
     result =
       case spawn_test_port(resolved_files, mix_env, timeout_ms, cd) do
@@ -108,11 +104,28 @@ defmodule Muex.TestRunner.Port do
         collect_output(port, acc, timeout_ms)
     after
       timeout_ms ->
+        kill_os_process(port)
         safe_close(port)
         {:error, :timeout}
     end
   rescue
     e -> {:error, e}
+  end
+
+  # Kill the OS process tree spawned by the port to prevent orphaned
+  # `mix test` processes from accumulating on timeout.
+  defp kill_os_process(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, os_pid} ->
+        # Kill the process group to include any children
+        System.cmd("kill", ["-9", "#{os_pid}"], stderr_to_stdout: true)
+
+      nil ->
+        # Port already closed or process already exited
+        :ok
+    end
+  rescue
+    _ -> :ok
   end
 
   defp safe_close(port) do

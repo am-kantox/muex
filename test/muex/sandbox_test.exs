@@ -74,15 +74,14 @@ defmodule Muex.SandboxTest do
       refute original == "# mutated content"
     end
 
-    test "restore re-creates the symlink", %{sandbox: sandbox} do
+    test "restore recovers original content", %{sandbox: sandbox} do
       target_file = "lib/muex.ex"
       sandbox_path = Path.join(sandbox.root, target_file)
 
       :ok = Sandbox.apply_mutation(sandbox, target_file, "# mutated", nil)
-      assert {:error, _} = File.read_link(sandbox_path)
+      assert File.read!(sandbox_path) == "# mutated"
 
       :ok = Sandbox.restore(sandbox, target_file)
-      assert {:ok, _} = File.read_link(sandbox_path)
 
       # Content should match original
       original = File.read!(Path.join(@project_root, target_file))

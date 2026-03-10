@@ -31,8 +31,10 @@ defmodule Muex.WorkerPool do
       pending_by_file: %{},
       # MapSet of file paths currently being mutated
       locked_files: MapSet.new(),
-      # Map of worker_ref => {mutation, file_path}
+      # Map of worker_ref => {mutation, file_path, sandbox_idx, monitor_ref}
       active_workers: %{},
+      # Reverse map: monitor_ref => worker_ref (for :DOWN lookup)
+      monitor_to_worker: %{},
       # Accumulated results (reverse order)
       results: [],
       completed_mutations: 0,
@@ -169,6 +171,7 @@ defmodule Muex.WorkerPool do
           completed_mutations: 0,
           locked_files: MapSet.new(),
           active_workers: %{},
+          monitor_to_worker: %{},
           sandboxes: sandboxes,
           available_sandboxes: available_sandboxes
       }
@@ -179,9 +182,15 @@ defmodule Muex.WorkerPool do
 
   @impl true
   def handle_info({:worker_done, worker_ref, result}, state) do
-    # Retrieve the worker's file path and sandbox index
-    {_mutation, file_path, sandbox_idx} = Map.fetch!(state.active_workers, worker_ref)
+    # Retrieve the worker's file path, sandbox index, and monitor ref
+    {_mutation, file_path, sandbox_idx, monitor_ref} =
+      Map.fetch!(state.active_workers, worker_ref)
+
+    # Demonitor so we don't get a spurious :DOWN for normal exit
+    Process.demonitor(monitor_ref, [:flush])
+
     new_active = Map.delete(state.active_workers, worker_ref)
+    new_monitor_map = Map.delete(state.monitor_to_worker, monitor_ref)
     new_completed = state.completed_mutations + 1
 
     # Print progress
@@ -214,6 +223,7 @@ defmodule Muex.WorkerPool do
     new_state = %{
       state
       | active_workers: new_active,
+        monitor_to_worker: new_monitor_map,
         results: [result | state.results],
         completed_mutations: new_completed,
         locked_files: new_locked,
@@ -231,6 +241,64 @@ defmodule Muex.WorkerPool do
     end
   end
 
+  @impl true
+  def handle_info({:DOWN, monitor_ref, :process, _pid, reason}, state) do
+    case Map.fetch(state.monitor_to_worker, monitor_ref) do
+      {:ok, worker_ref} ->
+        {mutation, file_path, sandbox_idx, ^monitor_ref} =
+          Map.fetch!(state.active_workers, worker_ref)
+
+        # Worker crashed without sending :worker_done — synthesize a failed result
+        Logger.warning("Mutation worker crashed: #{inspect(reason)}")
+
+        result = %{
+          mutation: mutation,
+          result: :invalid,
+          duration_ms: 0,
+          error: {:worker_crashed, reason}
+        }
+
+        new_active = Map.delete(state.active_workers, worker_ref)
+        new_monitor_map = Map.delete(state.monitor_to_worker, monitor_ref)
+        new_completed = state.completed_mutations + 1
+        new_locked = MapSet.delete(state.locked_files, file_path)
+        new_available = :queue.in(sandbox_idx, state.available_sandboxes)
+
+        new_pending =
+          case Map.get(state.pending_by_file, file_path) do
+            nil -> Map.delete(state.pending_by_file, file_path)
+            queue ->
+              if :queue.is_empty(queue),
+                do: Map.delete(state.pending_by_file, file_path),
+                else: state.pending_by_file
+          end
+
+        new_state = %{
+          state
+          | active_workers: new_active,
+            monitor_to_worker: new_monitor_map,
+            results: [result | state.results],
+            completed_mutations: new_completed,
+            locked_files: new_locked,
+            available_sandboxes: new_available,
+            pending_by_file: new_pending
+        }
+
+        if map_size(new_state.active_workers) == 0 and
+             all_queues_empty?(new_state.pending_by_file) do
+          Muex.Sandbox.cleanup(new_state.sandboxes)
+          GenServer.reply(new_state.caller, Enum.reverse(new_state.results))
+          {:noreply, %{new_state | caller: nil}}
+        else
+          {:noreply, schedule_workers(new_state)}
+        end
+
+      :error ->
+        # Normal exit of a worker already handled via :worker_done — ignore
+        {:noreply, state}
+    end
+  end
+
   # -- Scheduling --
 
   # Try to fill all available worker slots with mutations from unlocked files.
@@ -243,11 +311,11 @@ defmodule Muex.WorkerPool do
           # Claim a sandbox
           {{:value, sandbox_idx}, new_available} = :queue.out(state.available_sandboxes)
 
-          # Spawn worker
+          # Spawn worker and monitor it for crash recovery
           parent = self()
           worker_ref = make_ref()
 
-          _pid =
+          pid =
             spawn(fn ->
               result =
                 run_mutation_worker(
@@ -264,12 +332,16 @@ defmodule Muex.WorkerPool do
               send(parent, {:worker_done, worker_ref, result})
             end)
 
+          monitor_ref = Process.monitor(pid)
+
           new_state = %{
             state
             | pending_by_file: new_pending,
               locked_files: MapSet.put(state.locked_files, file_path),
               active_workers:
-                Map.put(state.active_workers, worker_ref, {mutation, file_path, sandbox_idx}),
+                Map.put(state.active_workers, worker_ref, {mutation, file_path, sandbox_idx, monitor_ref}),
+              monitor_to_worker:
+                Map.put(state.monitor_to_worker, monitor_ref, worker_ref),
               available_sandboxes: new_available
           }
 

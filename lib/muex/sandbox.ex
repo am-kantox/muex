@@ -41,7 +41,8 @@ defmodule Muex.Sandbox do
     build_env = Keyword.get(opts, :build_env, "test")
     test_paths = Keyword.get(opts, :test_paths, ["test"])
 
-    base_dir = Path.join(System.tmp_dir!(), "muex_sandboxes_#{System.system_time(:millisecond)}")
+    unique = System.unique_integer([:positive, :monotonic])
+    base_dir = Path.join(System.tmp_dir!(), "muex_sandboxes_#{System.system_time(:millisecond)}_#{unique}")
     File.mkdir_p!(base_dir)
 
     for i <- 1..count do
@@ -316,10 +317,29 @@ defmodule Muex.Sandbox do
   end
 
   defp extract_app_name_from_path(file_path) do
-    case Path.split(file_path) do
-      # apps/<app_name>/lib/...
+    # Canonicalize: strip leading ./ and make relative so Path.split
+    # always produces ["apps", app_name, ...] for umbrella paths.
+    # Handles ./apps/foo/..., /abs/path/apps/foo/..., and apps/foo/...
+    normalized =
+      file_path
+      |> Path.relative_to(".")
+      |> then(fn p ->
+        # If still absolute (outside cwd), try to find "apps" segment
+        case Path.type(p) do
+          :absolute ->
+            parts = Path.split(p)
+            case Enum.drop_while(parts, &(&1 != "apps")) do
+              ["apps" | _] = rest -> Path.join(rest)
+              _ -> p
+            end
+
+          _ ->
+            p
+        end
+      end)
+
+    case Path.split(normalized) do
       ["apps", app_name | _] -> app_name
-      # lib/... (non-umbrella)
       ["lib" | _] -> detect_app_from_build()
       _ -> nil
     end

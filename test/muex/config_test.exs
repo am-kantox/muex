@@ -6,7 +6,7 @@ defmodule Muex.ConfigTest do
   describe "from_args/1" do
     test "returns defaults when no args provided" do
       assert {:ok, config} = Config.from_args([])
-      assert config.files == "lib"
+      assert config.files == ["lib"]
       assert config.test_paths == ["test"]
       assert config.app == nil
       assert config.language == Muex.Language.Elixir
@@ -27,17 +27,17 @@ defmodule Muex.ConfigTest do
 
     test "parses --files flag" do
       assert {:ok, config} = Config.from_args(["--files", "lib/my_app"])
-      assert config.files == "lib/my_app"
+      assert config.files == ["lib/my_app"]
     end
 
     test "parses --path as synonym for --files" do
       assert {:ok, config} = Config.from_args(["--path", "lib/my_app"])
-      assert config.files == "lib/my_app"
+      assert config.files == ["lib/my_app"]
     end
 
     test "--files takes precedence over --path" do
       assert {:ok, config} = Config.from_args(["--path", "path_val", "--files", "files_val"])
-      assert config.files == "files_val"
+      assert config.files == ["files_val"]
     end
 
     test "returns error for invalid options" do
@@ -123,7 +123,7 @@ defmodule Muex.ConfigTest do
     test "sets files to apps/<app>/lib" do
       assert {:ok, config} = Config.from_args(["--app", "my_app"])
       assert config.app == "my_app"
-      assert config.files == "apps/my_app/lib"
+      assert config.files == ["apps/my_app/lib"]
     end
 
     test "sets test_paths to apps/<app>/test" do
@@ -136,7 +136,7 @@ defmodule Muex.ConfigTest do
                Config.from_args(["--app", "my_app", "--files", "custom/lib"])
 
       assert config.app == "my_app"
-      assert config.files == "custom/lib"
+      assert config.files == ["custom/lib"]
     end
 
     test "explicit --test-paths overrides --app for test_paths" do
@@ -158,7 +158,7 @@ defmodule Muex.ConfigTest do
                  "custom/test,shared/test"
                ])
 
-      assert config.files == "custom/lib"
+      assert config.files == ["custom/lib"]
       assert config.test_paths == ["custom/test", "shared/test"]
     end
   end
@@ -222,14 +222,14 @@ defmodule Muex.ConfigTest do
                  verbose: true
                )
 
-      assert config.files == "lib/my_app"
+      assert config.files == ["lib/my_app"]
       assert config.test_paths == ["spec", "test"]
       assert config.verbose == true
     end
 
     test "app sets default paths" do
       assert {:ok, config} = Config.from_opts(app: "billing")
-      assert config.files == "apps/billing/lib"
+      assert config.files == ["apps/billing/lib"]
       assert config.test_paths == ["apps/billing/test"]
     end
   end
