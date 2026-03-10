@@ -266,7 +266,9 @@ defmodule Muex.WorkerPool do
 
         new_pending =
           case Map.get(state.pending_by_file, file_path) do
-            nil -> Map.delete(state.pending_by_file, file_path)
+            nil ->
+              Map.delete(state.pending_by_file, file_path)
+
             queue ->
               if :queue.is_empty(queue),
                 do: Map.delete(state.pending_by_file, file_path),
@@ -339,9 +341,12 @@ defmodule Muex.WorkerPool do
             | pending_by_file: new_pending,
               locked_files: MapSet.put(state.locked_files, file_path),
               active_workers:
-                Map.put(state.active_workers, worker_ref, {mutation, file_path, sandbox_idx, monitor_ref}),
-              monitor_to_worker:
-                Map.put(state.monitor_to_worker, monitor_ref, worker_ref),
+                Map.put(
+                  state.active_workers,
+                  worker_ref,
+                  {mutation, file_path, sandbox_idx, monitor_ref}
+                ),
+              monitor_to_worker: Map.put(state.monitor_to_worker, monitor_ref, worker_ref),
               available_sandboxes: new_available
           }
 

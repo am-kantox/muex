@@ -42,7 +42,10 @@ defmodule Muex.Sandbox do
     test_paths = Keyword.get(opts, :test_paths, ["test"])
 
     unique = System.unique_integer([:positive, :monotonic])
-    base_dir = Path.join(System.tmp_dir!(), "muex_sandboxes_#{System.system_time(:millisecond)}_#{unique}")
+
+    base_dir =
+      Path.join(System.tmp_dir!(), "muex_sandboxes_#{System.system_time(:millisecond)}_#{unique}")
+
     File.mkdir_p!(base_dir)
 
     for i <- 1..count do
@@ -328,6 +331,7 @@ defmodule Muex.Sandbox do
         case Path.type(p) do
           :absolute ->
             parts = Path.split(p)
+
             case Enum.drop_while(parts, &(&1 != "apps")) do
               ["apps" | _] = rest -> Path.join(rest)
               _ -> p
