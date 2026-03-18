@@ -7,6 +7,8 @@ defmodule Muex.Mutator.FunctionCall do
   - Swap function arguments (when there are 2+ args)
   """
   @behaviour Muex.Mutator
+
+  @commutative_ops [:+, :*, :==, :!=, :===, :!==, :and, :or, :&&, :||, :when]
   @impl true
   def name do
     "FunctionCall"
@@ -84,6 +86,17 @@ defmodule Muex.Mutator.FunctionCall do
         []
     end
   end
+
+  @impl true
+  def equivalent?(%{description: description, ast: {func, _, _}}) when is_atom(func) do
+    String.contains?(description, "swap arguments") and func in @commutative_ops
+  end
+
+  def equivalent?(%{description: description, ast: {{:., _, [_, func]}, _, _}}) do
+    String.contains?(description, "swap arguments") and func in @commutative_ops
+  end
+
+  def equivalent?(_mutation), do: false
 
   defp special_form?(func) do
     func in [

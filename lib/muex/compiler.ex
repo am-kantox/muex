@@ -49,10 +49,68 @@ defmodule Muex.Compiler do
   """
   @spec compile_to_file(map(), map(), module()) :: {:ok, Path.t()} | {:error, term()}
   def compile_to_file(mutation, file_entry, language_adapter) do
-    mutated_full_ast = apply_mutation(file_entry.ast, mutation)
+    case patch_source_text(mutation, file_entry, language_adapter) do
+      {:ok, patched_source} ->
+        write_to_temp_file(patched_source, file_entry.path)
 
-    with {:ok, source} <- language_adapter.unparse(mutated_full_ast) do
-      write_to_temp_file(source, file_entry.path)
+      :fallback ->
+        # Text patching failed; fall back to full AST round-trip
+        mutated_full_ast = apply_mutation(file_entry.ast, mutation)
+
+        with {:ok, source} <- language_adapter.unparse(mutated_full_ast) do
+          write_to_temp_file(source, file_entry.path)
+        end
+    end
+  end
+
+  # Attempts a targeted text substitution on the mutation's line(s),
+  # preserving all other source formatting. Falls back to :fallback
+  # when the original expression can't be located in the source text.
+  defp patch_source_text(mutation, file_entry, language_adapter) do
+    mutation_line = get_in(mutation, [:location, :line])
+    original_node = Map.get(mutation, :original_ast)
+    mutated_node = Map.get(mutation, :ast)
+
+    with {:ok, original_source} <- File.read(file_entry.path),
+         {:ok, original_text} <- language_adapter.unparse(original_node),
+         {:ok, mutated_text} <- language_adapter.unparse(mutated_node) do
+      lines = String.split(original_source, "\n")
+      original_text = String.trim(original_text)
+      mutated_text = String.trim(mutated_text)
+
+      case find_and_replace_at_line(lines, mutation_line, original_text, mutated_text) do
+        {:ok, patched_lines} -> {:ok, Enum.join(patched_lines, "\n")}
+        :not_found -> :fallback
+      end
+    else
+      _ -> :fallback
+    end
+  rescue
+    _ -> :fallback
+  end
+
+  # Finds the original expression text near the expected line and replaces it.
+  # Checks the exact line first, then a small window around it (AST line numbers
+  # can be slightly off from the actual source position).
+  defp find_and_replace_at_line(lines, target_line, original_text, mutated_text) do
+    # 0-indexed; target_line is 1-indexed
+    idx = target_line - 1
+    window = max(0, idx - 2)..min(length(lines) - 1, idx + 2)
+
+    replaced =
+      Enum.reduce_while(window, nil, fn i, _acc ->
+        line = Enum.at(lines, i)
+
+        if String.contains?(line, original_text) do
+          {:halt, {i, String.replace(line, original_text, mutated_text, global: false)}}
+        else
+          {:cont, nil}
+        end
+      end)
+
+    case replaced do
+      {i, new_line} -> {:ok, List.replace_at(lines, i, new_line)}
+      nil -> :not_found
     end
   end
 

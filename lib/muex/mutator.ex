@@ -9,6 +9,22 @@ defmodule Muex.Mutator do
   Mutators targeting the same AST family (e.g., Elixir and Erlang both use BEAM
   AST) can declare support for multiple languages.
 
+  ## Equivalent Mutations
+
+  Mutators can declare that a generated mutation is semantically equivalent to the
+  original code — meaning no test can ever kill it. This avoids polluting mutation
+  scores with false negatives.
+
+  There are two ways to mark equivalence:
+
+  1. **At generation time** — set `equivalent: true` in the mutation map returned
+     by `mutate/2`. Use this when the mutator knows at generation time that the
+     mutation is equivalent (e.g., swapping arguments to a commutative operator).
+
+  2. **Via the `equivalent?/1` callback** — implement this for more complex
+     analysis that needs to inspect the full mutation map. The default
+     implementation checks the `:equivalent` key.
+
   ## Example
 
       defmodule Muex.Mutator.MyMutator do
@@ -27,11 +43,19 @@ defmodule Muex.Mutator do
         def description, do: "Mutates specific AST patterns"
 
         @impl true
-        def supported_languages, do: [:elixir, :erlang]
+        def supported_languages, do: [Muex.Language.Elixir, Muex.Language.Erlang]
+
+        # Optional: override for complex equivalence detection
+        @impl true
+        def equivalent?(%{description: "swap arguments in +()" <> _}), do: true
+        def equivalent?(_mutation), do: false
       end
   """
   @typedoc """
   Represents a single mutation with its metadata.
+
+  The `:equivalent` key is optional. When `true`, the mutation is considered
+  semantically equivalent to the original and will be filtered out by the optimizer.
   """
   @type mutation :: %{
           ast: term(),
@@ -40,6 +64,7 @@ defmodule Muex.Mutator do
           description: String.t(),
           location: %{file: String.t(), line: non_neg_integer()}
         }
+
   @doc """
   Applies mutations to the given AST.
 
@@ -53,20 +78,14 @@ defmodule Muex.Mutator do
     List of `mutation` maps, each representing a possible mutation
   """
   @callback mutate(ast :: term(), context :: map()) :: [mutation()]
+
   @doc """
   Returns the name of the mutator.
-
-  ## Returns
-
-    String name identifying this mutator
   """
   @callback name() :: String.t()
+
   @doc """
   Returns a description of what this mutator does.
-
-  ## Returns
-
-    String describing the mutation strategy
   """
   @callback description() :: String.t()
 
@@ -84,14 +103,35 @@ defmodule Muex.Mutator do
   @callback supported_languages() :: [module()]
 
   @doc """
-  Returns true if the given mutation is semantically equivalent to the original.
+  Returns whether a mutation is semantically equivalent to the original code.
 
-  Optional callback — defaults to checking the `:equivalent` key in the
-  mutation map.
+  Equivalent mutations can never be killed by any test and should be filtered out
+  to avoid inflating the "survived" count.
+
+  The default implementation checks for `equivalent: true` in the mutation map.
+  Override this callback in your mutator for more sophisticated detection.
   """
-  @callback equivalent?(mutation()) :: boolean()
+  @callback equivalent?(mutation :: mutation()) :: boolean()
 
   @optional_callbacks [equivalent?: 1]
+
+  @doc """
+  Checks whether a mutation is equivalent, delegating to the mutator module.
+
+  Falls back to checking the `:equivalent` key in the mutation map if the
+  mutator does not implement `equivalent?/1`.
+  """
+  @spec equivalent?(mutation()) :: boolean()
+  def equivalent?(%{mutator: mutator} = mutation) do
+    if function_exported?(mutator, :equivalent?, 1) do
+      mutator.equivalent?(mutation)
+    else
+      Map.get(mutation, :equivalent, false)
+    end
+  end
+
+  def equivalent?(_mutation), do: false
+
   @doc """
   Walks through an AST and applies all registered mutators.
 

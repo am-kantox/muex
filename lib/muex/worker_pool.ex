@@ -7,6 +7,7 @@ defmodule Muex.WorkerPool do
   """
 
   use GenServer
+  require Logger
 
   @default_max_workers 4
 
@@ -27,6 +28,22 @@ defmodule Muex.WorkerPool do
       :completed_mutations
     ]
   end
+
+  @doc """
+  Restores any source files left in a mutated state from a previous interrupted run.
+  Checks for `.backup` files and replaces the originals.
+  """
+  def restore_backups(paths) when is_list(paths) do
+    paths
+    |> Enum.flat_map(&Path.wildcard(Path.join(&1, "**/*.ex.backup")))
+    |> Enum.each(fn backup_file ->
+      original_file = String.replace_suffix(backup_file, ".backup", "")
+      Logger.warning("Restoring #{original_file} from backup (previous run interrupted)")
+      File.rename!(backup_file, original_file)
+    end)
+  end
+
+  def restore_backups(path) when is_binary(path), do: restore_backups([path])
 
   @doc """
   Starts the worker pool.
@@ -244,23 +261,27 @@ defmodule Muex.WorkerPool do
           {:ok, original_source} = File.read(original_file)
           backup_file = original_file <> ".backup"
           File.write!(backup_file, original_source)
-          File.write!(original_file, mutated_source)
-          File.rm!(mutated_file)
-          module_name = file_entry.module_name
 
-          if module_name do
-            # When Elixir atoms are string-interpolated, they already include
-            # the "Elixir." prefix (e.g. Elixir.MyApp.MyModule)
-            beam_pattern = "_build/**/#{module_name}.beam"
-            Path.wildcard(beam_pattern) |> Enum.each(&File.rm/1)
+          try do
+            File.write!(original_file, mutated_source)
+            File.rm!(mutated_file)
+            module_name = file_entry.module_name
+
+            if module_name do
+              # When Elixir atoms are string-interpolated, they already include
+              # the "Elixir." prefix (e.g. Elixir.MyApp.MyModule)
+              beam_pattern = "_build/**/#{module_name}.beam"
+              Path.wildcard(beam_pattern) |> Enum.each(&File.rm/1)
+            end
+
+            test_result =
+              Muex.TestRunner.Port.run_tests(test_files, original_file, timeout_ms: timeout_ms)
+
+            classify_test_result(test_result)
+          after
+            File.write!(original_file, original_source)
+            File.rm(backup_file)
           end
-
-          test_result =
-            Muex.TestRunner.Port.run_tests(test_files, original_file, timeout_ms: timeout_ms)
-
-          File.write!(original_file, original_source)
-          File.rm(backup_file)
-          classify_test_result(test_result)
 
         {:error, reason} ->
           {:invalid, reason}

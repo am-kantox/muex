@@ -164,22 +164,8 @@ defmodule Muex.MutantOptimizer do
 
   # Private helper functions
 
-  defp equivalent_mutant?(%{ast: ast, mutator: mutator}) do
-    mutator_name = get_mutator_name(mutator)
-
-    case {mutator_name, ast} do
-      # Arithmetic identity mutations
-      {"Arithmetic", {:+, _, [_, 0]}} -> true
-      {"Arithmetic", {:-, _, [_, 0]}} -> true
-      {"Arithmetic", {:*, _, [_, 1]}} -> true
-      {"Arithmetic", {:/, _, [_, 1]}} -> true
-      # Boolean short-circuit with literals
-      {"Boolean", {:and, _, [true, _]}} -> true
-      {"Boolean", {:or, _, [false, _]}} -> true
-      # Empty list mutations
-      {"Literal", []} -> true
-      _ -> false
-    end
+  defp equivalent_mutant?(mutation) do
+    Muex.Mutator.equivalent?(mutation)
   end
 
   defp get_mutator_name(mutator) when is_atom(mutator) do

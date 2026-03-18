@@ -23,21 +23,20 @@ defmodule Muex.Mutator.StatementDeletion do
 
   @impl true
   def mutate({:__block__, meta, statements}, context) when length(statements) >= 2 do
-    line = Keyword.get(meta, :line, 0)
-
     statements
     |> Enum.with_index()
     # Skip the last statement — that's the return value
     |> Enum.reject(fn {_stmt, idx} -> idx == length(statements) - 1 end)
-    |> Enum.map(fn {_stmt, idx} ->
+    |> Enum.map(fn {stmt, idx} ->
       remaining = List.delete_at(statements, idx)
       mutated_ast = simplify_block(meta, remaining)
+      stmt_line = get_statement_line(stmt)
 
       build_mutation(
         mutated_ast,
         "delete statement #{idx + 1} of #{length(statements)}",
         context,
-        line
+        stmt_line
       )
     end)
   end
@@ -47,6 +46,12 @@ defmodule Muex.Mutator.StatementDeletion do
   # A block with one remaining statement collapses to that statement.
   defp simplify_block(_meta, [single]), do: single
   defp simplify_block(meta, stmts), do: {:__block__, meta, stmts}
+
+  defp get_statement_line({_form, meta, _args}) when is_list(meta) do
+    Keyword.get(meta, :line, 0)
+  end
+
+  defp get_statement_line(_), do: 0
 
   defp build_mutation(mutated_ast, description, context, line) do
     %{
