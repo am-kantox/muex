@@ -267,8 +267,13 @@ defmodule Muex.Config do
     end
   end
 
-  defp parse_mutator_paths(nil) do
-    []
+  defp parse_mutator_paths(nil), do: []
+
+  defp parse_mutator_paths(raw) do
+    raw
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
   end
 
   @language_map %{

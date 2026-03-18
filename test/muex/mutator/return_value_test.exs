@@ -181,7 +181,9 @@ defmodule Muex.Mutator.ReturnValueTest do
 
   describe "mutate/2 - guard clauses" do
     test "extracts function name from when guard" do
-      signature = {:when, [], [{:foo, [], [{:x, [], Elixir}]}, {:is_integer, [], [{:x, [], Elixir}]}]}
+      signature =
+        {:when, [], [{:foo, [], [{:x, [], Elixir}]}, {:is_integer, [], [{:x, [], Elixir}]}]}
+
       ast = {:def, [line: 1], [signature, [do: 42]]}
 
       [mutation] = ReturnValue.mutate(ast, @context)

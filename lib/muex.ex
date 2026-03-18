@@ -82,11 +82,13 @@ defmodule Muex do
   def run(%Muex.Config{} = config) do
     log("Loading files from #{config.files}...", config.verbose)
 
-    case Muex.Loader.load(config.files, config.language) do
-      {:ok, []} ->
+    {:ok, all_files} = Muex.Loader.load(config.files, config.language)
+
+    case all_files do
+      [] ->
         {:ok, %{results: [], score: 0.0}}
 
-      {:ok, all_files} ->
+      _ ->
         log("Found #{length(all_files)} file(s)", config.verbose)
         do_run(config, all_files)
     end
