@@ -2,7 +2,7 @@ defmodule Muex.MixProject do
   use Mix.Project
 
   @app :muex
-  @version "0.3.3"
+  @version "0.4.0"
   @source_url "https://github.com/Oeditus/muex"
 
   def project do
@@ -151,6 +151,14 @@ defmodule Muex.MixProject do
 
   defp groups_for_modules do
     [
+      "Core Components": [
+        Muex.Compiler,
+        Muex.Loader,
+        Muex.Runner,
+        Muex.Reporter,
+        Muex.FileAnalyzer,
+        Muex.MutantOptimizer
+      ],
       "Language Adapters": [
         Muex.Language,
         Muex.Language.Elixir,
@@ -165,18 +173,16 @@ defmodule Muex.MixProject do
         Muex.Mutator.FunctionCall,
         Muex.Mutator.Literal
       ],
-      "Core Components": [
-        Muex.Compiler,
-        Muex.Loader,
-        Muex.Runner,
-        Muex.Reporter,
-        Muex.FileAnalyzer,
-        Muex.MutantOptimizer
+      Reporters: [
+        Muex.Reporter.Html,
+        Muex.Reporter.Json
       ],
       Utilities: [
-        Muex.TestDependency,
         Muex.CLI,
-        Mix.Tasks.Muex
+        Muex.DependencyAnalyzer,
+        Muex.TestDependency,
+        Muex.TestRunner.Port,
+        Muex.WorkerPool
       ]
     ]
   end

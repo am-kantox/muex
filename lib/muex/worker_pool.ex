@@ -5,9 +5,11 @@ defmodule Muex.WorkerPool do
   Uses GenServer to coordinate mutation testing across a configurable number
   of workers, preventing system overload while maximizing throughput.
   """
+
   use GenServer
-  require Logger
+
   @default_max_workers 4
+
   defmodule State do
     @moduledoc false
     defstruct [
