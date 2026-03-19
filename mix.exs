@@ -111,6 +111,7 @@ defmodule Muex.MixProject do
         LICENSE
         docs/INSTALLATION.md
         docs/MUTATION_OPTIMIZATION.md
+        docs/COMPARISON.md
       ),
       licenses: ["GPL-3.0", "CC-BY-SA-4.0"],
       maintainers: ["Aleksei Matiushkin"],
@@ -145,7 +146,8 @@ defmodule Muex.MixProject do
       "README.md",
       "USAGE.md": [title: "Usage Guide"],
       "docs/INSTALLATION.md": [title: "Installation Guide"],
-      "docs/MUTATION_OPTIMIZATION.md": [title: "Mutation Optimization"]
+      "docs/MUTATION_OPTIMIZATION.md": [title: "Mutation Optimization"],
+      "docs/COMPARISON.md": [title: "Comparison: Muex vs Darwin vs Exavier"]
     ]
   end
 
