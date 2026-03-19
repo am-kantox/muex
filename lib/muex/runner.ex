@@ -4,6 +4,8 @@ defmodule Muex.Runner do
 
   Executes the test suite for each mutation and classifies the results.
   """
+
+  alias Muex.Config
   @type result :: :killed | :survived | :invalid | :timeout
   @type mutation_result :: %{
           mutation: map(),
@@ -21,6 +23,7 @@ defmodule Muex.Runner do
     - `language_adapter` - The language adapter module
     - `opts` - Options:
       - `:timeout_ms` - Test timeout in milliseconds (default: 5000)
+      - `:test_paths` - List of test directories/globs (default: ["test"])
 
   ## Returns
 
@@ -29,6 +32,7 @@ defmodule Muex.Runner do
   @spec run_mutation(map(), map(), module(), keyword()) :: mutation_result()
   def run_mutation(mutation, file_entry, language_adapter, opts \\ []) do
     timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
+    test_paths = Keyword.get(opts, :test_paths, ["test"])
     start_time = System.monotonic_time(:millisecond)
 
     result =
@@ -39,7 +43,7 @@ defmodule Muex.Runner do
              language_adapter
            ) do
         {:ok, {_module, original_binary}} ->
-          test_result = Task.async(fn -> run_tests() end) |> Task.await(timeout_ms)
+          test_result = Task.async(fn -> run_tests(test_paths) end) |> Task.await(timeout_ms)
           Muex.Compiler.restore(file_entry.module_name, original_binary)
           classify_test_result(test_result)
 
@@ -107,13 +111,13 @@ defmodule Muex.Runner do
     results
   end
 
-  defp run_tests do
-    test_files = Path.wildcard("test/**/*_test.exs")
+  defp run_tests(test_paths) do
+    test_files = Config.expand_test_paths(test_paths)
 
     if Enum.empty?(test_files) do
       {:error, :no_tests_found}
     else
-      case System.cmd("mix", ["test", "--color"], stderr_to_stdout: true) do
+      case System.cmd("mix", ["test", "--color" | test_files], stderr_to_stdout: true) do
         {output, 0} ->
           {:ok, %{failures: 0, output: output}}
 

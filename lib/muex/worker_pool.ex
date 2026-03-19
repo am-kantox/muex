@@ -230,7 +230,8 @@ defmodule Muex.WorkerPool do
 
     test_files =
       if match?([], test_files) do
-        Path.wildcard("test/**/*_test.exs")
+        test_paths = Keyword.get(opts, :test_paths, ["test"])
+        Config.expand_test_paths(test_paths)
       else
         test_files
       end
@@ -248,6 +249,8 @@ defmodule Muex.WorkerPool do
           module_name = file_entry.module_name
 
           if module_name do
+            # When Elixir atoms are string-interpolated, they already include
+            # the "Elixir." prefix (e.g. Elixir.MyApp.MyModule)
             beam_pattern = "_build/**/#{module_name}.beam"
             Path.wildcard(beam_pattern) |> Enum.each(&File.rm/1)
           end

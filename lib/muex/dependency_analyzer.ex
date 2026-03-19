@@ -6,6 +6,8 @@ defmodule Muex.DependencyAnalyzer do
   This allows running only the tests that are affected by a specific mutation.
   """
 
+  alias Muex.Config
+
   @type dependency_map :: %{module() => [Path.t()]}
 
   @doc """
@@ -13,7 +15,7 @@ defmodule Muex.DependencyAnalyzer do
 
   ## Parameters
 
-    - `test_dir` - Directory containing test files (default: "test")
+    - `test_paths` - List of test directories, globs, or file paths (default: ["test"])
 
   ## Returns
 
@@ -21,12 +23,12 @@ defmodule Muex.DependencyAnalyzer do
 
   ## Examples
 
-      iex> analyze("test")
+      iex> analyze(["test"])
       %{MyModule => ["test/my_module_test.exs"], ...}
   """
-  @spec analyze(Path.t()) :: dependency_map()
-  def analyze(test_dir \\ "test") do
-    test_dir
+  @spec analyze([Path.t()] | Path.t()) :: dependency_map()
+  def analyze(test_paths \\ ["test"]) do
+    test_paths
     |> find_test_files()
     |> Enum.reduce(%{}, fn test_file, acc ->
       modules = extract_module_dependencies(test_file)
@@ -79,10 +81,14 @@ defmodule Muex.DependencyAnalyzer do
     end
   end
 
-  # Find all test files in directory
-  defp find_test_files(test_dir) do
-    pattern = Path.join([test_dir, "**", "*_test.exs"])
-    Path.wildcard(pattern)
+  # Find all test files from a list of paths
+  defp find_test_files(test_paths) when is_list(test_paths) do
+    Config.expand_test_paths(test_paths)
+  end
+
+  # Backward compat: single string still works
+  defp find_test_files(test_dir) when is_binary(test_dir) do
+    find_test_files([test_dir])
   end
 
   # Extract module dependencies from a test file
