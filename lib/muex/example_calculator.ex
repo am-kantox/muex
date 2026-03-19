@@ -1,7 +1,5 @@
 defmodule Muex.ExampleCalculator do
-  @moduledoc """
-  Example calculator for demonstrating mutation testing.
-  """
+  @moduledoc false
 
   def add(a, b), do: a + b
   def subtract(a, b), do: a - b
