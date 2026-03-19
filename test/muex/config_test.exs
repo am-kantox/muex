@@ -275,14 +275,14 @@ defmodule Muex.ConfigTest do
       assert {:ok, config} = Config.from_args(["--test-paths", "test"])
       files = Config.resolve_test_files(config)
       # Our project has test files in test/
-      assert length(files) > 0
+      assert match?([_ | _], files)
       assert Enum.all?(files, &String.ends_with?(&1, "_test.exs"))
     end
 
     test "glob patterns are expanded" do
       assert {:ok, config} = Config.from_args(["--test-paths", "test/muex/*_test.exs"])
       files = Config.resolve_test_files(config)
-      assert length(files) > 0
+      assert match?([_ | _], files)
       assert Enum.all?(files, &String.starts_with?(&1, "test/muex/"))
     end
 

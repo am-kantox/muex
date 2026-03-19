@@ -68,6 +68,9 @@ defmodule Muex do
       end
   """
 
+  alias Muex.Reporter.Html, as: HtmlReporter
+  alias Muex.Reporter.Json, as: JsonReporter
+
   @doc """
   Executes the full mutation testing pipeline from a `%Muex.Config{}`.
 
@@ -86,9 +89,6 @@ defmodule Muex do
       {:ok, all_files} ->
         log("Found #{length(all_files)} file(s)", config.verbose)
         do_run(config, all_files)
-
-      {:error, reason} ->
-        {:error, "Failed to load files: #{inspect(reason)}"}
     end
   end
 
@@ -208,11 +208,11 @@ defmodule Muex do
   end
 
   defp output_report(results, "json", _verbose) do
-    log(Muex.Reporter.Json.to_json(results))
+    log(JsonReporter.to_json(results))
   end
 
   defp output_report(results, "html", verbose) do
-    Muex.Reporter.Html.generate(results)
+    HtmlReporter.generate(results)
     log("HTML report generated: muex-report.html", verbose)
   end
 

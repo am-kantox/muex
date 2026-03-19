@@ -231,7 +231,7 @@ defmodule Muex.WorkerPool do
     test_files =
       if match?([], test_files) do
         test_paths = Keyword.get(opts, :test_paths, ["test"])
-        Config.expand_test_paths(test_paths)
+        Muex.Config.expand_test_paths(test_paths)
       else
         test_files
       end

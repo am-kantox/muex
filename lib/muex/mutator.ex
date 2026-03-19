@@ -84,8 +84,9 @@ defmodule Muex.Mutator do
       Macro.prewalk(ast, [], fn node, acc ->
         node_mutations =
           Enum.flat_map(mutators, fn mutator ->
-            mutator.mutate(node, context)
-            |> Enum.map(fn mutation -> Map.put(mutation, :original_ast, node) end)
+            node
+            |> mutator.mutate(context)
+            |> Enum.map(&Map.put(&1, :original_ast, node))
           end)
 
         {node, acc ++ node_mutations}

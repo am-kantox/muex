@@ -221,6 +221,26 @@ Real-world results from the shopping cart example (440 LOC, 84 tests):
 
 See [examples/cart/OPTIMIZATION_RESULTS.md](examples/cart/OPTIMIZATION_RESULTS.md) for complete analysis.
 
+## Compile-Time Configuration
+
+Custom language adapters and mutators can be registered in your `config/config.exs` so they are available via the CLI flags:
+
+```elixir
+# config/config.exs
+import Config
+
+# Register a custom language adapter (usable with --language lua)
+config :muex, languages: %{"lua" => MyApp.Language.Lua}
+
+# Register custom mutators (usable with --mutators string,regex)
+config :muex, mutators: %{
+  "string" => MyApp.Mutator.String,
+  "regex"  => MyApp.Mutator.Regex
+}
+```
+
+Language adapter modules must implement the `Muex.Language` behaviour and mutator modules must implement the `Muex.Mutator` behaviour. Custom entries are merged with the built-in ones at compile time; entries with the same key override the built-in default.
+
 ## Available Mutators
 
 Muex provides 6 comprehensive mutation strategies:

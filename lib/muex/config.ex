@@ -6,7 +6,31 @@ defmodule Muex.Config do
   pipeline. Supports umbrella apps (`--app`), explicit test paths
   (`--test-paths`), and all existing flags.
 
-  ## Options
+  ## Compile-Time Configuration
+
+  Custom language adapters and mutators can be registered via
+  `Application.compile_env/3` in `config/config.exs` (or any imported
+  config file). These maps are merged into the built-in adapters/mutators
+  at compile time.
+
+    * `:languages` - A `%{String.t() => module()}` map of additional
+      language adapters. Each key is the CLI name passed to `--language`
+      and the value is a module implementing the `Muex.Language` behaviour.
+
+          config :muex, languages: %{"lua" => MyApp.Language.Lua}
+
+    * `:mutators` - A `%{String.t() => module()}` map of additional
+      mutators. Each key is the CLI name usable in `--mutators` and the
+      value is a module implementing the `Muex.Mutator` behaviour.
+
+          config :muex, mutators: %{"string" => MyApp.Mutator.String}
+
+  The built-in language adapters (`"elixir"`, `"erlang"`) and mutators
+  (`"arithmetic"`, `"comparison"`, `"boolean"`, `"literal"`,
+  `"function_call"`, `"conditional"`) are always available. Entries in the
+  compile-time maps override built-in entries with the same key.
+
+  ## CLI Options
 
     * `--files` / `--path` - Source directory, file, or glob pattern (default: `"lib"`)
     * `--test-paths` - Comma-separated list of test directories, files, or glob
@@ -102,12 +126,12 @@ defmodule Muex.Config do
   """
   @spec from_args([String.t()]) :: {:ok, t()} | {:error, String.t()}
   def from_args(args) do
-    {opts, _rest, invalid} = OptionParser.parse(args, strict: @option_spec)
+    case OptionParser.parse(args, strict: @option_spec) do
+      {_opts, _rest, [_ | _] = invalid} ->
+        {:error, "Invalid options: #{inspect(invalid)}"}
 
-    if match?([_ | _], invalid) do
-      {:error, "Invalid options: #{inspect(invalid)}"}
-    else
-      from_opts(opts)
+      {opts, _rest, _} ->
+        from_opts(opts)
     end
   end
 
@@ -288,34 +312,32 @@ defmodule Muex.Config do
   end
 
   @language_map %{
-    "elixir" => Muex.Language.Elixir,
-    "erlang" => Muex.Language.Erlang
-  }
+                  "elixir" => Muex.Language.Elixir,
+                  "erlang" => Muex.Language.Erlang
+                }
+                |> Map.merge(Application.compile_env(:muex, :languages, %{}))
 
   defp resolve_language(name) do
-    case Map.fetch(@language_map, name) do
-      {:ok, mod} -> {:ok, mod}
-      :error -> {:error, "Unknown language: #{name}. Use elixir or erlang"}
-    end
+    with module <-
+           Map.get_lazy(@language_map, name, fn ->
+             Module.concat([Muex.Language, Macro.camelize(name)])
+           end),
+         {:module, ^module} <- Code.ensure_loaded(module),
+         do: {:ok, module},
+         else: (_ -> {:error, "Unknown language: #{name}"})
   end
 
   @mutator_map %{
-    "arithmetic" => Muex.Mutator.Arithmetic,
-    "comparison" => Muex.Mutator.Comparison,
-    "boolean" => Muex.Mutator.Boolean,
-    "literal" => Muex.Mutator.Literal,
-    "function_call" => Muex.Mutator.FunctionCall,
-    "conditional" => Muex.Mutator.Conditional
-  }
+                 "arithmetic" => Muex.Mutator.Arithmetic,
+                 "comparison" => Muex.Mutator.Comparison,
+                 "boolean" => Muex.Mutator.Boolean,
+                 "literal" => Muex.Mutator.Literal,
+                 "function_call" => Muex.Mutator.FunctionCall,
+                 "conditional" => Muex.Mutator.Conditional
+               }
+               |> Map.merge(Application.compile_env(:muex, :mutators, %{}))
 
-  @all_mutators [
-    Muex.Mutator.Arithmetic,
-    Muex.Mutator.Comparison,
-    Muex.Mutator.Boolean,
-    Muex.Mutator.Literal,
-    Muex.Mutator.FunctionCall,
-    Muex.Mutator.Conditional
-  ]
+  @all_mutators Map.values(@mutator_map)
 
   defp resolve_mutators(nil), do: {:ok, @all_mutators}
 

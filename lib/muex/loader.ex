@@ -21,7 +21,7 @@ defmodule Muex.Loader do
 
     `{:ok, files}` where files is a list of `file_entry` maps
   """
-  @spec load(String.t(), module(), keyword()) :: {:ok, [file_entry()]} | {:error, term()}
+  @spec load(String.t(), module(), keyword()) :: {:ok, [file_entry()]}
   def load(path_pattern, language_adapter, opts \\ []) do
     extensions = language_adapter.file_extensions()
     test_pattern = language_adapter.test_file_pattern()
