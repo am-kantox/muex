@@ -192,74 +192,73 @@ defmodule Muex.WorkerPool do
 
   @impl true
   def handle_info({:worker_done, worker_ref, result}, state) do
-    # Retrieve the worker's file path, sandbox index, and monitor ref
-    {_mutation, file_path, sandbox_idx, monitor_ref} =
-      Map.fetch!(state.active_workers, worker_ref)
+    # Use Map.pop instead of Map.fetch! — if :DOWN arrived first and
+    # already removed this worker, we ignore the duplicate completion.
+    case Map.pop(state.active_workers, worker_ref) do
+      {nil, _} ->
+        {:noreply, state}
 
-    # Demonitor so we don't get a spurious :DOWN for normal exit
-    Process.demonitor(monitor_ref, [:flush])
+      {{_mutation, file_path, sandbox_idx, monitor_ref}, new_active} ->
+        # Demonitor so we don't get a spurious :DOWN for normal exit
+        Process.demonitor(monitor_ref, [:flush])
 
-    new_active = Map.delete(state.active_workers, worker_ref)
-    new_monitor_map = Map.delete(state.monitor_to_worker, monitor_ref)
-    new_completed = state.completed_mutations + 1
+        new_monitor_map = Map.delete(state.monitor_to_worker, monitor_ref)
+        new_completed = state.completed_mutations + 1
 
-    # Print progress
-    if Keyword.get(state.opts, :verbose, false) do
-      try do
-        Reporter.print_progress(result, new_completed, state.total_mutations)
-      rescue
-        UndefinedFunctionError -> :ok
-      end
-    end
-
-    # Unlock the file and return the sandbox to the available pool
-    new_locked = MapSet.delete(state.locked_files, file_path)
-    new_available = :queue.in(sandbox_idx, state.available_sandboxes)
-
-    # Remove file from pending map if its queue is empty
-    new_pending =
-      case Map.get(state.pending_by_file, file_path) do
-        nil ->
-          Map.delete(state.pending_by_file, file_path)
-
-        queue ->
-          if :queue.is_empty(queue) do
-            Map.delete(state.pending_by_file, file_path)
-          else
-            state.pending_by_file
+        # Print progress
+        if Keyword.get(state.opts, :verbose, false) do
+          try do
+            Reporter.print_progress(result, new_completed, state.total_mutations)
+          rescue
+            UndefinedFunctionError -> :ok
           end
-      end
+        end
 
-    new_state = %{
-      state
-      | active_workers: new_active,
-        monitor_to_worker: new_monitor_map,
-        results: [result | state.results],
-        completed_mutations: new_completed,
-        locked_files: new_locked,
-        available_sandboxes: new_available,
-        pending_by_file: new_pending
-    }
+        # Unlock the file and return the sandbox to the available pool
+        new_locked = MapSet.delete(state.locked_files, file_path)
+        new_available = :queue.in(sandbox_idx, state.available_sandboxes)
 
-    # Check if all done
-    if map_size(new_state.active_workers) == 0 and all_queues_empty?(new_state.pending_by_file) do
-      Sandbox.cleanup(new_state.sandboxes)
-      GenServer.reply(new_state.caller, Enum.reverse(new_state.results))
-      {:noreply, %{new_state | caller: nil}}
-    else
-      {:noreply, schedule_workers(new_state)}
+        new_pending = cleanup_pending(state.pending_by_file, file_path)
+
+        new_state = %{
+          state
+          | active_workers: new_active,
+            monitor_to_worker: new_monitor_map,
+            results: [result | state.results],
+            completed_mutations: new_completed,
+            locked_files: new_locked,
+            available_sandboxes: new_available,
+            pending_by_file: new_pending
+        }
+
+        maybe_finish_or_schedule(new_state)
     end
   end
 
   @impl true
   def handle_info({:DOWN, monitor_ref, :process, _pid, reason}, state) do
     case Map.fetch(state.monitor_to_worker, monitor_ref) do
+      {:ok, _worker_ref} when reason in [:normal, :shutdown] ->
+        # Normal exit — :worker_done handles completion. Just clean up the
+        # monitor mapping so we don't leak entries.
+        new_monitor_map = Map.delete(state.monitor_to_worker, monitor_ref)
+        {:noreply, %{state | monitor_to_worker: new_monitor_map}}
+
       {:ok, worker_ref} ->
         {mutation, file_path, sandbox_idx, ^monitor_ref} =
           Map.fetch!(state.active_workers, worker_ref)
 
-        # Worker crashed without sending :worker_done — synthesize a failed result
+        # Worker crashed — synthesize a failed result
         Logger.warning("Mutation worker crashed: #{inspect(reason)}")
+
+        # Best-effort restore of the sandbox before re-queueing it
+        sandbox = Enum.at(state.sandboxes, sandbox_idx)
+
+        try do
+          Sandbox.restore(sandbox, file_path)
+        rescue
+          _ -> :ok
+        end
 
         result = %{
           mutation: mutation,
@@ -274,16 +273,7 @@ defmodule Muex.WorkerPool do
         new_locked = MapSet.delete(state.locked_files, file_path)
         new_available = :queue.in(sandbox_idx, state.available_sandboxes)
 
-        new_pending =
-          case Map.get(state.pending_by_file, file_path) do
-            nil ->
-              Map.delete(state.pending_by_file, file_path)
-
-            queue ->
-              if :queue.is_empty(queue),
-                do: Map.delete(state.pending_by_file, file_path),
-                else: state.pending_by_file
-          end
+        new_pending = cleanup_pending(state.pending_by_file, file_path)
 
         new_state = %{
           state
@@ -296,17 +286,10 @@ defmodule Muex.WorkerPool do
             pending_by_file: new_pending
         }
 
-        if map_size(new_state.active_workers) == 0 and
-             all_queues_empty?(new_state.pending_by_file) do
-          Sandbox.cleanup(new_state.sandboxes)
-          GenServer.reply(new_state.caller, Enum.reverse(new_state.results))
-          {:noreply, %{new_state | caller: nil}}
-        else
-          {:noreply, schedule_workers(new_state)}
-        end
+        maybe_finish_or_schedule(new_state)
 
       :error ->
-        # Normal exit of a worker already handled via :worker_done — ignore
+        # Worker already handled via :worker_done — ignore
         {:noreply, state}
     end
   end
@@ -393,6 +376,28 @@ defmodule Muex.WorkerPool do
     Enum.all?(pending_by_file, fn {_path, queue} -> :queue.is_empty(queue) end)
   end
 
+  defp cleanup_pending(pending_by_file, file_path) do
+    case Map.get(pending_by_file, file_path) do
+      nil ->
+        Map.delete(pending_by_file, file_path)
+
+      queue ->
+        if :queue.is_empty(queue),
+          do: Map.delete(pending_by_file, file_path),
+          else: pending_by_file
+    end
+  end
+
+  defp maybe_finish_or_schedule(state) do
+    if map_size(state.active_workers) == 0 and all_queues_empty?(state.pending_by_file) do
+      Sandbox.cleanup(state.sandboxes)
+      GenServer.reply(state.caller, Enum.reverse(state.results))
+      {:noreply, %{state | caller: nil}}
+    else
+      {:noreply, schedule_workers(state)}
+    end
+  end
+
   # -- Worker execution --
 
   defp run_mutation_worker(mutation, file_path, sandbox, state) do
@@ -425,18 +430,20 @@ defmodule Muex.WorkerPool do
           # Apply the mutation to the sandbox (not the real project)
           case Sandbox.apply_mutation(sandbox, file_path, mutated_source, file_entry.module_name) do
             {:ok, precompiled} ->
-              # Run tests from the sandbox directory
-              test_result =
-                PortRunner.run_tests(test_files,
-                  timeout_ms: timeout_ms,
-                  cd: sandbox.root,
-                  no_compile: precompiled
-                )
+              # Wrap in try/after so the sandbox is always restored,
+              # even if PortRunner.run_tests raises an exception.
+              try do
+                test_result =
+                  PortRunner.run_tests(test_files,
+                    timeout_ms: timeout_ms,
+                    cd: sandbox.root,
+                    no_compile: precompiled
+                  )
 
-              # Restore the sandbox for the next mutation
-              Sandbox.restore(sandbox, file_path)
-
-              classify_test_result(test_result)
+                classify_test_result(test_result)
+              after
+                Sandbox.restore(sandbox, file_path)
+              end
 
             {:error, reason} ->
               {:invalid, reason}

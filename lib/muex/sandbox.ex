@@ -159,8 +159,8 @@ defmodule Muex.Sandbox do
   end
 
   @doc """
-  Restores a sandbox after a mutation by re-creating the symlink to the
-  original source file.
+  Restores a sandbox after a mutation by copying the original source file
+  back over the mutated copy.
   """
   @spec restore(sandbox(), Path.t()) :: :ok
   def restore(sandbox, original_path) do

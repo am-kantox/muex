@@ -124,12 +124,12 @@ defmodule Muex.TestRunner.Port do
     e -> {:error, e}
   end
 
-  # Kill the OS process tree spawned by the port to prevent orphaned
-  # `mix test` processes from accumulating on timeout.
+  # Kill the OS process spawned by the port to prevent orphaned
+  # `mix test` processes from accumulating on timeout. Note: this only
+  # targets the main process, not any children it may have spawned.
   defp kill_os_process(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, os_pid} ->
-        # Kill the process group to include any children
         System.cmd("kill", ["-9", "#{os_pid}"], stderr_to_stdout: true)
 
       nil ->
