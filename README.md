@@ -219,7 +219,7 @@ Real-world results from the shopping cart example (440 LOC, 84 tests):
 | Conservative | 308 | ~1 min | 99.35% | CI/CD |
 | Balanced | 28 | ~10 sec | 89.29% | Development |
 
-See [examples/cart/OPTIMIZATION_RESULTS.md](examples/cart/OPTIMIZATION_RESULTS.md) for complete analysis.
+See `examples/cart/OPTIMIZATION_RESULTS.md` for complete analysis.
 
 ## Compile-Time Configuration
 
