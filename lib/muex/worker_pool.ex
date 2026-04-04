@@ -1,13 +1,25 @@
 defmodule Muex.WorkerPool do
   @moduledoc """
-  Manages a pool of workers for parallel mutation testing.
+  Manages a pool of workers for parallel mutation testing across all files.
 
-  Uses GenServer to coordinate mutation testing across a configurable number
-  of workers, preventing system overload while maximizing throughput.
+  Uses a global queue of mutations with per-file locking to maximize
+  cross-file parallelism while preventing concurrent modifications to the
+  same source file. Each worker operates in an isolated sandbox directory
+  so that parallel `mix test` invocations don't see each other's mutations.
+
+  ## Scheduling strategy
+
+  When a worker slot becomes available, the pool picks the next mutation
+  from any file that is not currently locked. This means mutations
+  targeting different files run in true parallel, while mutations
+  targeting the same file are serialized.
   """
 
   use GenServer
   require Logger
+
+  alias Muex.{Compiler, Config, DependencyAnalyzer, Reporter, Sandbox}
+  alias Muex.TestRunner.Port, as: PortRunner
 
   @default_max_workers 4
 
@@ -15,17 +27,33 @@ defmodule Muex.WorkerPool do
     @moduledoc false
     defstruct [
       :max_workers,
-      :pending_mutations,
-      :active_workers,
-      :results,
-      :file_entry,
-      :language_adapter,
-      :opts,
-      :dependency_map,
-      :file_to_module,
       :caller,
       :total_mutations,
-      :completed_mutations
+      :opts,
+      # Expanded test file paths (resolved once at run start)
+      test_paths: ["test"],
+      # Map of file_path => :queue.queue(mutation)
+      pending_by_file: %{},
+      # MapSet of file paths currently being mutated
+      locked_files: MapSet.new(),
+      # Map of worker_ref => {mutation, file_path, sandbox_idx, monitor_ref}
+      active_workers: %{},
+      # Reverse map: monitor_ref => worker_ref (for :DOWN lookup)
+      monitor_to_worker: %{},
+      # Accumulated results (reverse order)
+      results: [],
+      completed_mutations: 0,
+      # Map of file_path => file_entry
+      file_entries: %{},
+      # Language adapter module
+      language_adapter: nil,
+      # Dependency map and file→module map
+      dependency_map: %{},
+      file_to_module: %{},
+      # List of sandbox structs, one per worker slot
+      sandboxes: [],
+      # Queue of available sandbox indices
+      available_sandboxes: :queue.new()
     ]
   end
 
@@ -48,36 +76,39 @@ defmodule Muex.WorkerPool do
   @doc """
   Starts the worker pool.
 
-  ## Parameters
+  ## Options
 
-    - `opts` - Options:
-      - `:max_workers` - Maximum concurrent workers (default: 4)
+    - `:max_workers` - Maximum concurrent workers (default: #{@default_max_workers})
   """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts)
   end
 
   @doc """
-  Runs mutations through the worker pool.
+  Runs all mutations through the worker pool.
+
+  Accepts the full set of mutations across all files. Mutations targeting
+  different files run in parallel (up to `max_workers`); mutations targeting
+  the same file are serialized automatically.
 
   ## Parameters
 
     - `pool` - The worker pool PID
-    - `mutations` - List of mutations to test
-    - `file_entry` - The file entry containing the original AST
+    - `mutations` - List of all mutations to test (across all files)
+    - `file_entries` - Map of file paths to file entry maps
     - `language_adapter` - The language adapter module
     - `dependency_map` - Map of modules to test files
     - `file_to_module` - Map of file paths to module names
-    - `opts` - Options including `:timeout_ms`
+    - `opts` - Options including `:timeout_ms`, `:test_paths`, `:verbose`
 
   ## Returns
 
-    List of mutation results
+    List of mutation results.
   """
   @spec run_mutations(
           pid(),
           [map()],
-          map(),
+          %{Path.t() => map()},
           module(),
           map(),
           map(),
@@ -86,7 +117,7 @@ defmodule Muex.WorkerPool do
   def run_mutations(
         pool,
         mutations,
-        file_entry,
+        file_entries,
         language_adapter,
         dependency_map,
         file_to_module,
@@ -94,33 +125,22 @@ defmodule Muex.WorkerPool do
       ) do
     GenServer.call(
       pool,
-      {:run_mutations, mutations, file_entry, language_adapter, dependency_map, file_to_module,
+      {:run_mutations, mutations, file_entries, language_adapter, dependency_map, file_to_module,
        opts},
       :infinity
     )
   end
 
+  # -- GenServer callbacks --
+
   @impl true
   def init(opts) do
-    # The worker pool tests mutations for a single file. Since port-based
-    # testing overwrites the source file on disk, only one worker can run at
-    # a time — parallel writers to the same file race on read/write/restore.
-    max_workers = 1
-    _requested = Keyword.get(opts, :max_workers, @default_max_workers)
+    Process.flag(:trap_exit, true)
+    max_workers = Keyword.get(opts, :max_workers, @default_max_workers)
 
     state = %State{
       max_workers: max_workers,
-      pending_mutations: :queue.new(),
-      active_workers: %{},
-      results: [],
-      file_entry: nil,
-      language_adapter: nil,
-      opts: [],
-      dependency_map: %{},
-      file_to_module: %{},
-      caller: nil,
-      total_mutations: 0,
-      completed_mutations: 0
+      opts: opts
     }
 
     {:ok, state}
@@ -128,175 +148,317 @@ defmodule Muex.WorkerPool do
 
   @impl true
   def handle_call(
-        {:run_mutations, mutations, file_entry, language_adapter, dependency_map, file_to_module,
-         opts},
+        {:run_mutations, mutations, file_entries, language_adapter, dependency_map,
+         file_to_module, opts},
         from,
         state
       ) do
-    pending_queue =
-      Enum.reduce(mutations, :queue.new(), fn mutation, queue -> :queue.in(mutation, queue) end)
-
-    new_state = %{
-      state
-      | pending_mutations: pending_queue,
-        file_entry: file_entry,
-        language_adapter: language_adapter,
-        dependency_map: dependency_map,
-        file_to_module: file_to_module,
-        opts: opts,
-        caller: from,
-        results: [],
-        total_mutations: length(mutations),
-        completed_mutations: 0
-    }
-
     if Enum.empty?(mutations) do
-      {:reply, [], new_state}
+      {:reply, [], state}
     else
-      updated_state = start_workers(new_state)
-      {:noreply, updated_state}
+      # Create sandboxes for parallel workers
+      test_paths = Keyword.get(opts, :test_paths, ["test"])
+
+      sandboxes =
+        Sandbox.create_pool(state.max_workers,
+          project_root: File.cwd!(),
+          test_paths: test_paths
+        )
+
+      available_sandboxes =
+        sandboxes
+        |> Enum.with_index()
+        |> Enum.reduce(:queue.new(), fn {_sb, idx}, q -> :queue.in(idx, q) end)
+
+      # Group mutations by file path into per-file queues
+      pending_by_file =
+        Enum.reduce(mutations, %{}, fn mutation, acc ->
+          file_path = mutation.location.file
+          queue = Map.get(acc, file_path, :queue.new())
+          Map.put(acc, file_path, :queue.in(mutation, queue))
+        end)
+
+      new_state = %{
+        state
+        | pending_by_file: pending_by_file,
+          file_entries: file_entries,
+          language_adapter: language_adapter,
+          dependency_map: dependency_map,
+          file_to_module: file_to_module,
+          test_paths: test_paths,
+          opts: opts,
+          caller: from,
+          results: [],
+          total_mutations: length(mutations),
+          completed_mutations: 0,
+          locked_files: MapSet.new(),
+          active_workers: %{},
+          monitor_to_worker: %{},
+          sandboxes: sandboxes,
+          available_sandboxes: available_sandboxes
+      }
+
+      {:noreply, schedule_workers(new_state)}
     end
   end
 
   @impl true
   def handle_info({:worker_done, worker_ref, result}, state) do
-    {_worker_pid, new_active} = Map.pop(state.active_workers, worker_ref)
-    new_results = [result | state.results]
-    new_completed = state.completed_mutations + 1
+    # Use Map.pop instead of Map.fetch! — if :DOWN arrived first and
+    # already removed this worker, we ignore the duplicate completion.
+    case Map.pop(state.active_workers, worker_ref) do
+      {nil, _} ->
+        {:noreply, state}
 
-    # Print progress dot (only if verbose and Reporter module is available)
-    if Keyword.get(state.opts, :verbose, false) do
-      try do
-        Muex.Reporter.print_progress(result, new_completed, state.total_mutations)
-      rescue
-        UndefinedFunctionError -> :ok
-      end
+      {{_mutation, file_path, sandbox_idx, monitor_ref}, new_active} ->
+        # Demonitor so we don't get a spurious :DOWN for normal exit
+        Process.demonitor(monitor_ref, [:flush])
+
+        new_monitor_map = Map.delete(state.monitor_to_worker, monitor_ref)
+        new_completed = state.completed_mutations + 1
+
+        # Print progress
+        if Keyword.get(state.opts, :verbose, false) do
+          try do
+            Reporter.print_progress(result, new_completed, state.total_mutations)
+          rescue
+            UndefinedFunctionError -> :ok
+          end
+        end
+
+        # Unlock the file and return the sandbox to the available pool
+        new_locked = MapSet.delete(state.locked_files, file_path)
+        new_available = :queue.in(sandbox_idx, state.available_sandboxes)
+
+        new_pending = cleanup_pending(state.pending_by_file, file_path)
+
+        new_state = %{
+          state
+          | active_workers: new_active,
+            monitor_to_worker: new_monitor_map,
+            results: [result | state.results],
+            completed_mutations: new_completed,
+            locked_files: new_locked,
+            available_sandboxes: new_available,
+            pending_by_file: new_pending
+        }
+
+        maybe_finish_or_schedule(new_state)
     end
-
-    new_state = %{
-      state
-      | active_workers: new_active,
-        results: new_results,
-        completed_mutations: new_completed
-    }
-
-    final_state =
-      if :queue.is_empty(new_state.pending_mutations) and map_size(new_state.active_workers) == 0 do
-        GenServer.reply(new_state.caller, Enum.reverse(new_state.results))
-        %{new_state | caller: nil}
-      else
-        start_workers(new_state)
-      end
-
-    {:noreply, final_state}
   end
 
-  defp start_workers(state) do
+  @impl true
+  def handle_info({:DOWN, monitor_ref, :process, _pid, reason}, state) do
+    case Map.fetch(state.monitor_to_worker, monitor_ref) do
+      {:ok, _worker_ref} when reason in [:normal, :shutdown] ->
+        # Normal exit — :worker_done handles completion. Just clean up the
+        # monitor mapping so we don't leak entries.
+        new_monitor_map = Map.delete(state.monitor_to_worker, monitor_ref)
+        {:noreply, %{state | monitor_to_worker: new_monitor_map}}
+
+      {:ok, worker_ref} ->
+        {mutation, file_path, sandbox_idx, ^monitor_ref} =
+          Map.fetch!(state.active_workers, worker_ref)
+
+        # Worker crashed — synthesize a failed result
+        Logger.warning("Mutation worker crashed: #{inspect(reason)}")
+
+        # Best-effort restore of the sandbox before re-queueing it
+        sandbox = Enum.at(state.sandboxes, sandbox_idx)
+
+        try do
+          Sandbox.restore(sandbox, file_path)
+        rescue
+          _ -> :ok
+        end
+
+        result = %{
+          mutation: mutation,
+          result: :invalid,
+          duration_ms: 0,
+          error: {:worker_crashed, reason}
+        }
+
+        new_active = Map.delete(state.active_workers, worker_ref)
+        new_monitor_map = Map.delete(state.monitor_to_worker, monitor_ref)
+        new_completed = state.completed_mutations + 1
+        new_locked = MapSet.delete(state.locked_files, file_path)
+        new_available = :queue.in(sandbox_idx, state.available_sandboxes)
+
+        new_pending = cleanup_pending(state.pending_by_file, file_path)
+
+        new_state = %{
+          state
+          | active_workers: new_active,
+            monitor_to_worker: new_monitor_map,
+            results: [result | state.results],
+            completed_mutations: new_completed,
+            locked_files: new_locked,
+            available_sandboxes: new_available,
+            pending_by_file: new_pending
+        }
+
+        maybe_finish_or_schedule(new_state)
+
+      :error ->
+        # Worker already handled via :worker_done — ignore
+        {:noreply, state}
+    end
+  end
+
+  # -- Scheduling --
+
+  # Try to fill all available worker slots with mutations from unlocked files.
+  defp schedule_workers(state) do
     available_slots = state.max_workers - map_size(state.active_workers)
 
-    if available_slots > 0 and not :queue.is_empty(state.pending_mutations) do
-      start_worker(state)
+    if available_slots > 0 and not :queue.is_empty(state.available_sandboxes) do
+      case pick_next_mutation(state) do
+        {:ok, mutation, file_path, new_pending} ->
+          # Claim a sandbox
+          {{:value, sandbox_idx}, new_available} = :queue.out(state.available_sandboxes)
+
+          # Spawn worker and monitor it for crash recovery
+          parent = self()
+          worker_ref = make_ref()
+
+          pid =
+            spawn(fn ->
+              result =
+                run_mutation_worker(
+                  mutation,
+                  file_path,
+                  Enum.at(state.sandboxes, sandbox_idx),
+                  state
+                )
+
+              send(parent, {:worker_done, worker_ref, result})
+            end)
+
+          monitor_ref = Process.monitor(pid)
+
+          new_state = %{
+            state
+            | pending_by_file: new_pending,
+              locked_files: MapSet.put(state.locked_files, file_path),
+              active_workers:
+                Map.put(
+                  state.active_workers,
+                  worker_ref,
+                  {mutation, file_path, sandbox_idx, monitor_ref}
+                ),
+              monitor_to_worker: Map.put(state.monitor_to_worker, monitor_ref, worker_ref),
+              available_sandboxes: new_available
+          }
+
+          # Recurse to fill more slots
+          schedule_workers(new_state)
+
+        :none ->
+          # No unlocked files with pending mutations — wait for a worker to finish
+          state
+      end
     else
       state
     end
   end
 
-  defp start_worker(state) do
-    case :queue.out(state.pending_mutations) do
-      {{:value, mutation}, new_queue} ->
-        parent = self()
-        task_ref = make_ref()
+  # Find the next mutation from a file that is NOT currently locked.
+  # Prioritizes files with the most pending mutations for better throughput.
+  defp pick_next_mutation(state) do
+    unlocked_files =
+      state.pending_by_file
+      |> Enum.reject(fn {file_path, queue} ->
+        MapSet.member?(state.locked_files, file_path) or :queue.is_empty(queue)
+      end)
+      |> Enum.sort_by(fn {_path, queue} -> :queue.len(queue) end, :desc)
 
-        _pid =
-          spawn(fn ->
-            result =
-              run_mutation_worker(
-                mutation,
-                state.file_entry,
-                state.language_adapter,
-                state.dependency_map,
-                state.file_to_module,
-                state.opts
-              )
+    case unlocked_files do
+      [{file_path, queue} | _] ->
+        {{:value, mutation}, new_queue} = :queue.out(queue)
+        new_pending = Map.put(state.pending_by_file, file_path, new_queue)
+        {:ok, mutation, file_path, new_pending}
 
-            send(parent, {:worker_done, task_ref, result})
-          end)
-
-        new_active = Map.put(state.active_workers, task_ref, mutation)
-        new_state = %{state | pending_mutations: new_queue, active_workers: new_active}
-        start_workers(new_state)
-
-      {:empty, _queue} ->
-        state
+      [] ->
+        :none
     end
   end
 
-  defp run_mutation_worker(
-         mutation,
-         file_entry,
-         language_adapter,
-         dependency_map,
-         file_to_module,
-         opts
-       ) do
-    timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
+  defp all_queues_empty?(pending_by_file) do
+    Enum.all?(pending_by_file, fn {_path, queue} -> :queue.is_empty(queue) end)
+  end
+
+  defp cleanup_pending(pending_by_file, file_path) do
+    case Map.get(pending_by_file, file_path) do
+      nil ->
+        Map.delete(pending_by_file, file_path)
+
+      queue ->
+        if :queue.is_empty(queue),
+          do: Map.delete(pending_by_file, file_path),
+          else: pending_by_file
+    end
+  end
+
+  defp maybe_finish_or_schedule(state) do
+    if map_size(state.active_workers) == 0 and all_queues_empty?(state.pending_by_file) do
+      Sandbox.cleanup(state.sandboxes)
+      GenServer.reply(state.caller, Enum.reverse(state.results))
+      {:noreply, %{state | caller: nil}}
+    else
+      {:noreply, schedule_workers(state)}
+    end
+  end
+
+  # -- Worker execution --
+
+  defp run_mutation_worker(mutation, file_path, sandbox, state) do
+    timeout_ms = Keyword.get(state.opts, :timeout_ms, 5000)
     start_time = System.monotonic_time(:millisecond)
 
+    file_entry = Map.fetch!(state.file_entries, file_path)
+
+    # Resolve test files for this mutation
     test_files =
-      Muex.DependencyAnalyzer.get_tests_for_mutation(
+      DependencyAnalyzer.get_tests_for_mutation(
         mutation,
-        dependency_map,
-        file_to_module
+        state.dependency_map,
+        state.file_to_module
       )
 
     test_files =
       if match?([], test_files) do
-        test_paths = Keyword.get(opts, :test_paths, ["test"])
-        Muex.Config.expand_test_paths(test_paths)
+        Config.expand_test_paths(state.test_paths)
       else
         test_files
       end
 
     result =
-      case Muex.Compiler.compile_to_file(mutation, file_entry, language_adapter) do
+      case Compiler.compile_to_file(mutation, file_entry, state.language_adapter) do
         {:ok, mutated_file} ->
           {:ok, mutated_source} = File.read(mutated_file)
-          original_file = file_entry.path
-          # Use the source captured at load time, not a re-read from disk.
-          # Re-reading would see another worker's mutation during parallel runs.
-          original_source = Map.get(file_entry, :original_source)
-          backup_file = original_file <> ".backup"
+          File.rm!(mutated_file)
 
-          # If we have the original source in memory, write a backup for crash
-          # recovery. If not (older callers without original_source), fall back
-          # to reading from disk.
-          original_source =
-            if original_source do
-              File.write!(backup_file, original_source)
-              original_source
-            else
-              {:ok, src} = File.read(original_file)
-              File.write!(backup_file, src)
-              src
-            end
+          # Apply the mutation to the sandbox (not the real project)
+          case Sandbox.apply_mutation(sandbox, file_path, mutated_source, file_entry.module_name) do
+            {:ok, precompiled} ->
+              # Wrap in try/after so the sandbox is always restored,
+              # even if PortRunner.run_tests raises an exception.
+              try do
+                test_result =
+                  PortRunner.run_tests(test_files,
+                    timeout_ms: timeout_ms,
+                    cd: sandbox.root,
+                    no_compile: precompiled
+                  )
 
-          try do
-            File.write!(original_file, mutated_source)
-            File.rm!(mutated_file)
-            module_name = file_entry.module_name
+                classify_test_result(test_result)
+              after
+                Sandbox.restore(sandbox, file_path)
+              end
 
-            if module_name do
-              beam_pattern = "_build/**/#{module_name}.beam"
-              Path.wildcard(beam_pattern) |> Enum.each(&File.rm/1)
-            end
-
-            test_result =
-              Muex.TestRunner.Port.run_tests(test_files, original_file, timeout_ms: timeout_ms)
-
-            classify_test_result(test_result)
-          after
-            File.write!(original_file, original_source)
-            File.rm(backup_file)
+            {:error, reason} ->
+              {:invalid, reason}
           end
 
         {:error, reason} ->
@@ -318,19 +480,17 @@ defmodule Muex.WorkerPool do
     :exit, reason -> %{mutation: mutation, result: :timeout, duration_ms: 0, error: reason}
   end
 
-  defp classify_test_result({:ok, %{failures: 0}}) do
-    :survived
-  end
+  defp classify_test_result({:ok, %{failures: 0}}), do: :survived
+  defp classify_test_result({:ok, %{failures: _}}), do: :killed
+  defp classify_test_result({:error, :timeout}), do: :timeout
+  defp classify_test_result({:error, _}), do: :invalid
 
-  defp classify_test_result({:ok, %{failures: _}}) do
-    :killed
-  end
+  @impl true
+  def terminate(_reason, state) do
+    if state.sandboxes != [] do
+      Sandbox.cleanup(state.sandboxes)
+    end
 
-  defp classify_test_result({:error, :timeout}) do
-    :timeout
-  end
-
-  defp classify_test_result({:error, _}) do
-    :invalid
+    :ok
   end
 end

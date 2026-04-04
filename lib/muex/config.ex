@@ -60,7 +60,7 @@ defmodule Muex.Config do
   """
 
   @type t :: %__MODULE__{
-          files: String.t(),
+          files: [String.t()],
           test_paths: [String.t()],
           app: String.t() | nil,
           language: module(),
@@ -212,13 +212,15 @@ defmodule Muex.Config do
     end
   end
 
-  @doc "Resolves `test_paths` entries into actual test file paths on disk.\n\nEach entry in `test_paths` is treated as follows:\n  - Directory → expands to `dir/**/*_test.exs`\n  - Glob pattern (contains `*` or `?`) → expanded via `Path.wildcard/1`\n  - Regular file → taken literally\n"
-  @spec resolve_test_files(t()) :: [Path.t()]
-  def resolve_test_files(%__MODULE__{test_paths: paths}) do
-    expand_test_paths(paths)
-  end
+  @doc """
+  Expands a list of test path entries into actual file paths on disk.
 
-  @doc "Expands a list of test path entries into actual file paths on disk.\n\nEach entry is treated as follows:\n  - Directory -> expands to `dir/**/*_test.exs`\n  - Glob pattern (contains `*` or `?`) -> expanded via `Path.wildcard/1`\n  - Regular file -> taken literally\n  - Other -> attempted as a wildcard pattern\n"
+  Each entry is treated as follows:
+    - Directory -> expands to `dir/**/*_test.exs`
+    - Glob pattern (contains `*` or `?`) -> expanded via `Path.wildcard/1`
+    - Regular file -> taken literally
+    - Other -> attempted as a wildcard pattern
+  """
   @spec expand_test_paths([String.t()]) :: [Path.t()]
   def expand_test_paths(paths) when is_list(paths) do
     paths |> Enum.flat_map(&expand_test_path/1) |> Enum.uniq()
@@ -239,9 +241,17 @@ defmodule Muex.Config do
     explicit = Keyword.get(opts, :files) || Keyword.get(opts, :path)
 
     cond do
-      explicit -> explicit
-      app -> Path.join(["apps", app, "lib"])
-      true -> "lib"
+      explicit ->
+        explicit
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+
+      app ->
+        [Path.join(["apps", app, "lib"])]
+
+      true ->
+        ["lib"]
     end
   end
 

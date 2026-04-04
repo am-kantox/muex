@@ -80,12 +80,10 @@ defmodule Muex do
   """
   @spec run(Muex.Config.t()) :: {:ok, map()} | {:error, String.t()}
   def run(%Muex.Config{} = config) do
-    log("Loading files from #{config.files}...", config.verbose)
+    log("Loading files from #{Enum.join(config.files, ", ")}...", config.verbose)
 
-    {:ok, all_files} = Muex.Loader.load(config.files, config.language)
-
-    case all_files do
-      [] ->
+    case Muex.Loader.load_all(config.files, config.language) do
+      {:ok, []} ->
         {:ok, %{results: [], score: 0.0}}
 
       _ ->
@@ -164,30 +162,27 @@ defmodule Muex do
     log("Analyzing test dependencies...", config.verbose)
 
     dependency_map = Muex.DependencyAnalyzer.analyze(config.test_paths)
+    file_entries = Map.new(files, fn file -> {file.path, file} end)
     file_to_module = Map.new(files, fn file -> {file.path, file.module_name} end)
 
-    log("Running tests...\n", config.verbose)
+    log(
+      "Running tests...
+",
+      config.verbose
+    )
 
     results =
-      Enum.flat_map(files, fn file ->
-        file_mutations = Enum.filter(all_mutations, fn m -> m.location.file == file.path end)
-
-        if match?([_ | _], file_mutations) do
-          Muex.Runner.run_all(
-            file_mutations,
-            file,
-            config.language,
-            dependency_map,
-            file_to_module,
-            max_workers: config.concurrency,
-            timeout_ms: config.timeout_ms,
-            verbose: config.verbose,
-            test_paths: config.test_paths
-          )
-        else
-          []
-        end
-      end)
+      Muex.Runner.run_all(
+        all_mutations,
+        file_entries,
+        config.language,
+        dependency_map,
+        file_to_module,
+        max_workers: config.concurrency,
+        timeout_ms: config.timeout_ms,
+        verbose: config.verbose,
+        test_paths: config.test_paths
+      )
 
     case output_report(results, config.format, config.verbose) do
       {:error, _} = err -> err

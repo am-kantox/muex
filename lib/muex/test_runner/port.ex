@@ -22,44 +22,55 @@ defmodule Muex.TestRunner.Port do
   ## Parameters
 
     - `test_files` - List of test file paths to execute
-    - `mutated_file` - Path to the mutated source file (will be compiled in the test env)
     - `opts` - Options:
       - `:timeout_ms` - Test timeout in milliseconds (default: 5000)
       - `:mix_env` - Mix environment (default: "test")
+      - `:cd` - Working directory for the port process (default: current dir).
+        When running inside a sandbox, this should be the sandbox root.
 
   ## Returns
 
     `{:ok, test_result}` or `{:error, reason}`
   """
-  @spec run_tests([Path.t()], Path.t() | nil, keyword()) ::
-          {:ok, test_result()} | {:error, term()}
-  def run_tests(test_files, _mutated_file \\ nil, opts \\ []) do
+  @spec run_tests([Path.t()], keyword()) :: {:ok, test_result()} | {:error, term()}
+  def run_tests(test_files, opts \\ []) do
     timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
     mix_env = Keyword.get(opts, :mix_env, "test")
+    cd = Keyword.get(opts, :cd)
+    no_compile = Keyword.get(opts, :no_compile, false)
     start_time = System.monotonic_time(:millisecond)
 
-    result =
-      case spawn_test_port(test_files, mix_env, timeout_ms) do
-        {:ok, output, exit_code} ->
-          duration_ms = System.monotonic_time(:millisecond) - start_time
+    case spawn_test_port(test_files, mix_env, timeout_ms) do
+      {:ok, output, exit_code} ->
+        duration_ms = System.monotonic_time(:millisecond) - start_time
+
+        if exit_code != 0 and compile_error?(output) do
+          {:error, {:compile_error, output}}
+        else
           failures = count_failures(output, exit_code)
 
           {:ok,
            %{failures: failures, output: output, exit_code: exit_code, duration_ms: duration_ms}}
+        end
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-
-    result
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
-  defp spawn_test_port(test_files, mix_env, timeout_ms) do
-    # `mix test` does incremental compilation automatically. The worker pool
-    # already deleted the .beam file for the mutated module, so Mix will detect
-    # the changed source and recompile just that one module. Using `compile --force`
-    # here would recompile the entire project per mutation — catastrophic in umbrellas.
-    args = ["test" | test_files]
+  defp spawn_test_port(test_files, mix_env, timeout_ms, cd, no_compile) do
+    # When the caller pre-compiled the mutated module and wrote the .beam
+    # directly, we pass --no-compile to skip Mix's compilation phase entirely.
+    # We also always pass --no-deps-check and --no-archives-check since deps
+    # don't change between mutations.
+    compile_flags =
+      if no_compile do
+        ["--no-compile", "--no-deps-check", "--no-archives-check"]
+      else
+        ["--no-deps-check", "--no-archives-check"]
+      end
+
+    args = ["test"] ++ compile_flags ++ test_files
 
     current_env =
       System.get_env()
@@ -70,7 +81,10 @@ defmodule Muex.TestRunner.Port do
         [{~c"MIX_ENV", String.to_charlist(mix_env)}]
 
     cmd_args = Enum.map(args, &String.to_charlist/1)
-    port_opts = [:binary, :exit_status, :stderr_to_stdout, :hide, env: env, args: cmd_args]
+
+    port_opts =
+      [:binary, :exit_status, :stderr_to_stdout, :hide, env: env, args: cmd_args]
+      |> maybe_add_cd(cd)
 
     try do
       mix_path = System.find_executable("mix")
@@ -82,6 +96,9 @@ defmodule Muex.TestRunner.Port do
       kind, reason -> {:error, {kind, reason}}
     end
   end
+
+  defp maybe_add_cd(port_opts, nil), do: port_opts
+  defp maybe_add_cd(port_opts, cd), do: [{:cd, String.to_charlist(cd)} | port_opts]
 
   defp collect_output(port, acc, timeout_ms) do
     receive do
@@ -96,11 +113,28 @@ defmodule Muex.TestRunner.Port do
         collect_output(port, acc, timeout_ms)
     after
       timeout_ms ->
+        kill_os_process(port)
         safe_close(port)
         {:error, :timeout}
     end
   rescue
     e -> {:error, e}
+  end
+
+  # Kill the OS process spawned by the port to prevent orphaned
+  # `mix test` processes from accumulating on timeout. Note: this only
+  # targets the main process, not any children it may have spawned.
+  defp kill_os_process(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, os_pid} ->
+        System.cmd("kill", ["-9", "#{os_pid}"], stderr_to_stdout: true)
+
+      nil ->
+        # Port already closed or process already exited
+        :ok
+    end
+  rescue
+    _ -> :ok
   end
 
   defp safe_close(port) do
@@ -109,6 +143,24 @@ defmodule Muex.TestRunner.Port do
     ArgumentError -> :ok
   catch
     :error, :badarg -> :ok
+  end
+
+  # Detect whether mix test output indicates a compilation error rather than
+  # a test failure. When a mutation breaks compilation, mix test exits non-zero
+  # but never runs any tests — these should be classified as :invalid, not :killed.
+  #
+  # The key signal is: non-zero exit with no ExUnit summary in the output.
+  # We also check for Elixir exception patterns (CompileError, SyntaxError,
+  # TokenMissingError, etc.) to avoid false positives from other non-test crashes.
+  @compile_error_pattern ~r/\*\* \(\w*(?:Error|Missing\w*)\)/
+  defp compile_error?(output) do
+    not has_exunit_summary?(output) and
+      Regex.match?(@compile_error_pattern, output)
+  end
+
+  defp has_exunit_summary?(output) do
+    Regex.match?(~r/\d+ tests?, \d+ failures?/, output) or
+      String.contains?(output, "0 failures")
   end
 
   defp count_failures(output, _exit_code) do

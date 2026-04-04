@@ -5,7 +5,6 @@ defmodule Muex.Runner do
   Executes the test suite for each mutation and classifies the results.
   """
 
-  alias Muex.Config
   @type result :: :killed | :survived | :invalid | :timeout
   @type mutation_result :: %{
           mutation: map(),
@@ -14,80 +13,34 @@ defmodule Muex.Runner do
           error: term() | nil
         }
   @doc """
-  Runs tests for a single mutation.
+  Runs all mutations in parallel using a global worker pool with sandbox isolation.
+
+  Mutations targeting different files run concurrently. Mutations targeting the
+  same file are serialized via per-file locking.
 
   ## Parameters
 
-    - `mutation` - The mutation to test
-    - `file_entry` - The file entry containing the original AST
-    - `language_adapter` - The language adapter module
-    - `opts` - Options:
-      - `:timeout_ms` - Test timeout in milliseconds (default: 5000)
-      - `:test_paths` - List of test directories/globs (default: ["test"])
-
-  ## Returns
-
-    `mutation_result` map with test results
-  """
-  @spec run_mutation(map(), map(), module(), keyword()) :: mutation_result()
-  def run_mutation(mutation, file_entry, language_adapter, opts \\ []) do
-    timeout_ms = Keyword.get(opts, :timeout_ms, 5000)
-    test_paths = Keyword.get(opts, :test_paths, ["test"])
-    start_time = System.monotonic_time(:millisecond)
-
-    result =
-      case Muex.Compiler.compile(
-             mutation,
-             file_entry.ast,
-             file_entry.module_name,
-             language_adapter
-           ) do
-        {:ok, {_module, original_binary}} ->
-          test_result = Task.async(fn -> run_tests(test_paths) end) |> Task.await(timeout_ms)
-          Muex.Compiler.restore(file_entry.module_name, original_binary)
-          classify_test_result(test_result)
-
-        {:error, reason} ->
-          {:invalid, reason}
-      end
-
-    duration_ms = System.monotonic_time(:millisecond) - start_time
-
-    {result_type, error} =
-      case result do
-        {:invalid, err} -> {:invalid, err}
-        other -> {other, nil}
-      end
-
-    %{mutation: mutation, result: result_type, duration_ms: duration_ms, error: error}
-  rescue
-    e -> %{mutation: mutation, result: :timeout, duration_ms: 0, error: e}
-  catch
-    :exit, reason -> %{mutation: mutation, result: :timeout, duration_ms: 0, error: reason}
-  end
-
-  @doc """
-  Runs tests for all mutations in parallel using worker pool.
-
-  ## Parameters
-
-    - `mutations` - List of mutations to test
-    - `file_entry` - The file entry containing the original AST
+    - `mutations` - List of all mutations to test (across all files)
+    - `file_entries` - Map of file paths to file entry maps
     - `language_adapter` - The language adapter module
     - `dependency_map` - Map of modules to test files
     - `file_to_module` - Map of file paths to module names
     - `opts` - Options:
       - `:max_workers` - Maximum concurrent workers (default: 4)
       - `:timeout_ms` - Test timeout in milliseconds (default: 5000)
+      - `:test_paths` - List of test path patterns (default: ["test"])
+      - `:verbose` - Show progress (default: false)
 
   ## Returns
 
     List of `mutation_result` maps
   """
-  @spec run_all([map()], map(), module(), map(), map(), keyword()) :: [mutation_result()]
+  @spec run_all([map()], %{Path.t() => map()}, module(), map(), map(), keyword()) :: [
+          mutation_result()
+        ]
   def run_all(
         mutations,
-        file_entry,
+        file_entries,
         language_adapter,
         dependency_map,
         file_to_module,
@@ -96,56 +49,18 @@ defmodule Muex.Runner do
     max_workers = Keyword.get(opts, :max_workers, 4)
     {:ok, pool} = Muex.WorkerPool.start_link(max_workers: max_workers)
 
-    results =
+    try do
       Muex.WorkerPool.run_mutations(
         pool,
         mutations,
-        file_entry,
+        file_entries,
         language_adapter,
         dependency_map,
         file_to_module,
         opts
       )
-
-    GenServer.stop(pool)
-    results
-  end
-
-  defp run_tests(test_paths) do
-    test_files = Config.expand_test_paths(test_paths)
-
-    if Enum.empty?(test_files) do
-      {:error, :no_tests_found}
-    else
-      case System.cmd("mix", ["test", "--color" | test_files], stderr_to_stdout: true) do
-        {output, 0} ->
-          {:ok, %{failures: 0, output: output}}
-
-        {output, _exit_code} ->
-          failures = count_failures(output)
-          {:ok, %{failures: failures, output: output}}
-      end
+    after
+      GenServer.stop(pool, :normal, :infinity)
     end
-  rescue
-    e -> {:error, e}
-  end
-
-  defp count_failures(output) do
-    case Regex.run(~r/(\d+) failures?/, output) do
-      [_, count] -> String.to_integer(count)
-      nil -> 1
-    end
-  end
-
-  defp classify_test_result({:ok, %{failures: 0}}) do
-    :survived
-  end
-
-  defp classify_test_result({:ok, %{failures: _}}) do
-    :killed
-  end
-
-  defp classify_test_result({:error, _}) do
-    :invalid
   end
 end

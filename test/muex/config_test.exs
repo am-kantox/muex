@@ -6,7 +6,7 @@ defmodule Muex.ConfigTest do
   describe "from_args/1" do
     test "returns defaults when no args provided" do
       assert {:ok, config} = Config.from_args([])
-      assert config.files == "lib"
+      assert config.files == ["lib"]
       assert config.test_paths == ["test"]
       assert config.app == nil
       assert config.language == Muex.Language.Elixir
@@ -29,17 +29,17 @@ defmodule Muex.ConfigTest do
 
     test "parses --files flag" do
       assert {:ok, config} = Config.from_args(["--files", "lib/my_app"])
-      assert config.files == "lib/my_app"
+      assert config.files == ["lib/my_app"]
     end
 
     test "parses --path as synonym for --files" do
       assert {:ok, config} = Config.from_args(["--path", "lib/my_app"])
-      assert config.files == "lib/my_app"
+      assert config.files == ["lib/my_app"]
     end
 
     test "--files takes precedence over --path" do
       assert {:ok, config} = Config.from_args(["--path", "path_val", "--files", "files_val"])
-      assert config.files == "files_val"
+      assert config.files == ["files_val"]
     end
 
     test "returns error for invalid options" do
@@ -125,7 +125,7 @@ defmodule Muex.ConfigTest do
     test "sets files to apps/<app>/lib" do
       assert {:ok, config} = Config.from_args(["--app", "my_app"])
       assert config.app == "my_app"
-      assert config.files == "apps/my_app/lib"
+      assert config.files == ["apps/my_app/lib"]
     end
 
     test "sets test_paths to apps/<app>/test" do
@@ -138,7 +138,7 @@ defmodule Muex.ConfigTest do
                Config.from_args(["--app", "my_app", "--files", "custom/lib"])
 
       assert config.app == "my_app"
-      assert config.files == "custom/lib"
+      assert config.files == ["custom/lib"]
     end
 
     test "explicit --test-paths overrides --app for test_paths" do
@@ -160,7 +160,7 @@ defmodule Muex.ConfigTest do
                  "custom/test,shared/test"
                ])
 
-      assert config.files == "custom/lib"
+      assert config.files == ["custom/lib"]
       assert config.test_paths == ["custom/test", "shared/test"]
     end
   end
@@ -224,14 +224,14 @@ defmodule Muex.ConfigTest do
                  verbose: true
                )
 
-      assert config.files == "lib/my_app"
+      assert config.files == ["lib/my_app"]
       assert config.test_paths == ["spec", "test"]
       assert config.verbose == true
     end
 
     test "app sets default paths" do
       assert {:ok, config} = Config.from_opts(app: "billing")
-      assert config.files == "apps/billing/lib"
+      assert config.files == ["apps/billing/lib"]
       assert config.test_paths == ["apps/billing/test"]
     end
   end
@@ -272,10 +272,10 @@ defmodule Muex.ConfigTest do
     end
   end
 
-  describe "resolve_test_files/1" do
+  describe "expand_test_paths/1" do
     test "expands directory to test files" do
       assert {:ok, config} = Config.from_args(["--test-paths", "test"])
-      files = Config.resolve_test_files(config)
+      files = Config.expand_test_paths(config.test_paths)
       # Our project has test files in test/
       assert match?([_ | _], files)
       assert Enum.all?(files, &String.ends_with?(&1, "_test.exs"))
@@ -283,14 +283,14 @@ defmodule Muex.ConfigTest do
 
     test "glob patterns are expanded" do
       assert {:ok, config} = Config.from_args(["--test-paths", "test/muex/*_test.exs"])
-      files = Config.resolve_test_files(config)
+      files = Config.expand_test_paths(config.test_paths)
       assert match?([_ | _], files)
       assert Enum.all?(files, &String.starts_with?(&1, "test/muex/"))
     end
 
     test "nonexistent path returns empty" do
       assert {:ok, config} = Config.from_args(["--test-paths", "nonexistent_dir"])
-      files = Config.resolve_test_files(config)
+      files = Config.expand_test_paths(config.test_paths)
       assert files == []
     end
 
@@ -298,7 +298,7 @@ defmodule Muex.ConfigTest do
       assert {:ok, config} =
                Config.from_args(["--test-paths", "test/muex,test/muex"])
 
-      files = Config.resolve_test_files(config)
+      files = Config.expand_test_paths(config.test_paths)
       # Should be deduped
       assert files == Enum.uniq(files)
     end
