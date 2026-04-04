@@ -38,20 +38,22 @@ defmodule Muex.TestRunner.Port do
     mix_env = Keyword.get(opts, :mix_env, "test")
     start_time = System.monotonic_time(:millisecond)
 
-    result =
-      case spawn_test_port(test_files, mix_env, timeout_ms) do
-        {:ok, output, exit_code} ->
-          duration_ms = System.monotonic_time(:millisecond) - start_time
+    case spawn_test_port(test_files, mix_env, timeout_ms) do
+      {:ok, output, exit_code} ->
+        duration_ms = System.monotonic_time(:millisecond) - start_time
+
+        if exit_code != 0 and compile_error?(output) do
+          {:error, {:compile_error, output}}
+        else
           failures = count_failures(output, exit_code)
 
           {:ok,
            %{failures: failures, output: output, exit_code: exit_code, duration_ms: duration_ms}}
+        end
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-
-    result
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp spawn_test_port(test_files, mix_env, timeout_ms) do
@@ -109,6 +111,24 @@ defmodule Muex.TestRunner.Port do
     ArgumentError -> :ok
   catch
     :error, :badarg -> :ok
+  end
+
+  # Detect whether mix test output indicates a compilation error rather than
+  # a test failure. When a mutation breaks compilation, mix test exits non-zero
+  # but never runs any tests — these should be classified as :invalid, not :killed.
+  #
+  # The key signal is: non-zero exit with no ExUnit summary in the output.
+  # We also check for Elixir exception patterns (CompileError, SyntaxError,
+  # TokenMissingError, etc.) to avoid false positives from other non-test crashes.
+  @compile_error_pattern ~r/\*\* \(\w*(?:Error|Missing\w*)\)/
+  defp compile_error?(output) do
+    not has_exunit_summary?(output) and
+      Regex.match?(@compile_error_pattern, output)
+  end
+
+  defp has_exunit_summary?(output) do
+    Regex.match?(~r/\d+ tests?, \d+ failures?/, output) or
+      String.contains?(output, "0 failures")
   end
 
   defp count_failures(output, _exit_code) do
