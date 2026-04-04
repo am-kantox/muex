@@ -84,6 +84,7 @@ defmodule Muex.CLI do
         --test-paths <paths>       Comma-separated test dirs/files/globs (default: "test")
         --language <lang>           Language adapter: elixir, erlang (default: elixir)
         --mutators <list>           Comma-separated mutators (default: all)
+        --mutator-paths <dirs>      Comma-separated dirs with custom mutators
         --concurrency <n>           Parallel mutations (default: CPU cores)
         --timeout <ms>              Test timeout in milliseconds (default: 5000)
         --fail-at <score>           Minimum mutation score to pass (default: 100)

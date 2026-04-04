@@ -91,7 +91,10 @@ defmodule Muex.Loader do
     with {:ok, source} <- File.read(path),
          {:ok, ast} <- language_adapter.parse(source) do
       module_name = extract_module_name(ast)
-      {:ok, %{path: path, ast: ast, module_name: module_name}}
+      # Store the verbatim source so workers can restore the file after
+      # mutation without re-reading from disk (which may see a concurrent
+      # worker's mutation instead of the original).
+      {:ok, %{path: path, ast: ast, module_name: module_name, original_source: source}}
     end
   end
 

@@ -20,6 +20,9 @@ defmodule Muex.Mutator.Boolean do
   end
 
   @impl true
+  def supported_languages, do: [Muex.Language.Elixir, Muex.Language.Erlang]
+
+  @impl true
   def mutate(ast, context) do
     case ast do
       {:and, meta, args} ->

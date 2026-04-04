@@ -86,7 +86,7 @@ defmodule Muex do
       {:ok, []} ->
         {:ok, %{results: [], score: 0.0}}
 
-      {:ok, all_files} ->
+      _ ->
         log("Found #{length(all_files)} file(s)", config.verbose)
         do_run(config, all_files)
     end

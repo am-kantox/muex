@@ -22,7 +22,9 @@ defmodule Muex.ConfigTest do
       assert config.min_complexity == nil
       assert config.max_per_function == nil
       assert Muex.Mutator.Literal in config.mutators
-      assert length(config.mutators) == 6
+      assert Muex.Mutator.StatementDeletion in config.mutators
+      assert Muex.Mutator.ReturnValue in config.mutators
+      assert length(config.mutators) == 8
     end
 
     test "parses --files flag" do
@@ -299,6 +301,67 @@ defmodule Muex.ConfigTest do
       files = Config.expand_test_paths(config.test_paths)
       # Should be deduped
       assert files == Enum.uniq(files)
+    end
+  end
+
+  describe "--mutator-paths" do
+    test "custom mutator from external path is discovered" do
+      dir =
+        Path.join(System.tmp_dir!(), "muex_custom_mutators_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(dir)
+
+      File.write!(Path.join(dir, "noop_mutator.ex"), """
+      defmodule Muex.Mutator.TestNoop do
+        @behaviour Muex.Mutator
+
+        @impl true
+        def name, do: "TestNoop"
+
+        @impl true
+        def description, do: "No-op test mutator"
+
+        @impl true
+        def mutate(_ast, _context), do: []
+
+        @impl true
+        def supported_languages, do: [Muex.Language.Elixir, Muex.Language.Erlang]
+      end
+      """)
+
+      assert {:ok, config} = Config.from_args(["--mutator-paths", dir])
+      assert Enum.any?(config.mutators, &(&1 == Muex.Mutator.TestNoop))
+    after
+      :code.purge(Muex.Mutator.TestNoop)
+      :code.delete(Muex.Mutator.TestNoop)
+    end
+
+    test "non-mutator files in path are ignored" do
+      dir =
+        Path.join(
+          System.tmp_dir!(),
+          "muex_custom_non_mutator_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(dir)
+
+      File.write!(Path.join(dir, "helper.ex"), """
+      defmodule Muex.TestHelper.NotAMutator do
+        def hello, do: :world
+      end
+      """)
+
+      assert {:ok, config} = Config.from_args(["--mutator-paths", dir])
+      refute Enum.any?(config.mutators, &(&1 == Muex.TestHelper.NotAMutator))
+    after
+      :code.purge(Muex.TestHelper.NotAMutator)
+      :code.delete(Muex.TestHelper.NotAMutator)
+    end
+
+    test "empty mutator-paths does not affect defaults" do
+      assert {:ok, with_paths} = Config.from_args(["--mutator-paths", ""])
+      assert {:ok, without} = Config.from_args([])
+      assert with_paths.mutators == without.mutators
     end
   end
 end

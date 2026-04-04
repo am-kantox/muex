@@ -18,6 +18,9 @@ defmodule Muex.Mutator.Comparison do
   def description, do: "Mutates comparison operators (==, !=, >, <, >=, <=)"
 
   @impl true
+  def supported_languages, do: [Muex.Language.Elixir, Muex.Language.Erlang]
+
+  @impl true
   # credo:disable-for-lines:42
   def mutate(ast, context) do
     case ast do

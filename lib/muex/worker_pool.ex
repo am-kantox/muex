@@ -18,11 +18,7 @@ defmodule Muex.WorkerPool do
   use GenServer
   require Logger
 
-  alias Muex.Compiler
-  alias Muex.Config
-  alias Muex.DependencyAnalyzer
-  alias Muex.Reporter
-  alias Muex.Sandbox
+  alias Muex.{Compiler, Config, DependencyAnalyzer, Reporter, Sandbox}
   alias Muex.TestRunner.Port, as: PortRunner
 
   @default_max_workers 4
@@ -60,6 +56,22 @@ defmodule Muex.WorkerPool do
       available_sandboxes: :queue.new()
     ]
   end
+
+  @doc """
+  Restores any source files left in a mutated state from a previous interrupted run.
+  Checks for `.backup` files and replaces the originals.
+  """
+  def restore_backups(paths) when is_list(paths) do
+    paths
+    |> Enum.flat_map(&Path.wildcard(Path.join(&1, "**/*.ex.backup")))
+    |> Enum.each(fn backup_file ->
+      original_file = String.replace_suffix(backup_file, ".backup", "")
+      Logger.warning("Restoring #{original_file} from backup (previous run interrupted)")
+      File.rename!(backup_file, original_file)
+    end)
+  end
+
+  def restore_backups(path) when is_binary(path), do: restore_backups([path])
 
   @doc """
   Starts the worker pool.

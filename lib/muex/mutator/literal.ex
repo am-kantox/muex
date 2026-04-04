@@ -21,6 +21,9 @@ defmodule Muex.Mutator.Literal do
   end
 
   @impl true
+  def supported_languages, do: [Muex.Language.Elixir, Muex.Language.Erlang]
+
+  @impl true
   def mutate(ast, context) do
     case ast do
       n when is_integer(n) ->

@@ -19,6 +19,9 @@ defmodule Muex.Mutator.Conditional do
   end
 
   @impl true
+  def supported_languages, do: [Muex.Language.Elixir, Muex.Language.Erlang]
+
+  @impl true
   def mutate(ast, context) do
     case ast do
       {:if, meta, [condition, [do: true_branch, else: false_branch]]} ->
