@@ -175,8 +175,16 @@ defmodule Muex.DependencyAnalyzer do
   # Convert alias parts to module atom
   defp module_from_parts(parts) do
     parts
-    |> Enum.map_join(".", &to_string/1)
-    |> then(&("Elixir." <> &1))
+    |> Enum.flat_map(&safe_to_string/1)
+    |> then(&Enum.join(["Elixir" | &1]))
     |> String.to_atom()
+  end
+
+  defp safe_to_string(part) when is_atom(part), do: [Atom.to_string(part)]
+
+  defp safe_to_string(non_atom) do
+    require Logger
+    Logger.debug("Unexpected part in module alias: " <> inspect(non_atom))
+    []
   end
 end
