@@ -40,7 +40,7 @@ defmodule Muex.TestRunner.Port do
     no_compile = Keyword.get(opts, :no_compile, false)
     start_time = System.monotonic_time(:millisecond)
 
-    case spawn_test_port(test_files, mix_env, timeout_ms) do
+    case spawn_test_port(test_files, mix_env, timeout_ms, cd, no_compile) do
       {:ok, output, exit_code} ->
         duration_ms = System.monotonic_time(:millisecond) - start_time
 
