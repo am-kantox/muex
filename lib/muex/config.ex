@@ -46,8 +46,8 @@ defmodule Muex.Config do
       modules implementing `Muex.Mutator` behaviour. Files are compiled and
       loaded at runtime.
     * `--concurrency` - Number of parallel workers (default: number of schedulers)
-    * `--timeout` - Test timeout in milliseconds (default: 5000)
-    * `--fail-at` - Minimum mutation score percentage to pass (default: 100)
+    * `--timeout` - Test timeout in milliseconds (default: 10000)
+    * `--fail-at` - Minimum mutation score percentage to pass (default: 80)
     * `--format` - Output format: `terminal`, `json`, `html` (default: `terminal`)
     * `--min-score` - Minimum file complexity score for inclusion (default: 20)
     * `--max-mutations` - Cap total mutations tested; 0 = unlimited (default: 0)
@@ -63,6 +63,7 @@ defmodule Muex.Config do
           files: [String.t()],
           test_paths: [String.t()],
           app: String.t() | nil,
+          project_root: Path.t(),
           language: module(),
           mutators: [module()],
           concurrency: pos_integer(),
@@ -78,16 +79,17 @@ defmodule Muex.Config do
           min_complexity: non_neg_integer() | nil,
           max_per_function: pos_integer() | nil
         }
-  @enforce_keys [:files, :test_paths, :language, :mutators]
+  @enforce_keys [:files, :test_paths, :project_root, :language, :mutators]
   defstruct [
     :files,
     :test_paths,
     :app,
+    :project_root,
     :language,
     :mutators,
     concurrency: 4,
-    timeout_ms: 5000,
-    fail_at: 100,
+    timeout_ms: 10_000,
+    fail_at: 80,
     format: "terminal",
     min_score: 20,
     max_mutations: 0,
@@ -103,6 +105,7 @@ defmodule Muex.Config do
                path: :string,
                test_paths: :string,
                app: :string,
+               project_root: :string,
                language: :string,
                mutators: :string,
                mutator_paths: :string,
@@ -137,19 +140,23 @@ defmodule Muex.Config do
     app = Keyword.get(opts, :app)
     extra_paths = parse_mutator_paths(Keyword.get(opts, :mutator_paths))
 
+    files = resolve_files(opts, app)
+    project_root = resolve_project_root(Keyword.get(opts, :project_root), files)
+
     with {:ok, language} <- resolve_language(Keyword.get(opts, :language, "elixir")),
          {:ok, mutators} <- resolve_mutators(Keyword.get(opts, :mutators), extra_paths, language),
          {:ok, optimize_level} <-
            validate_optimize_level(Keyword.get(opts, :optimize_level, "balanced")) do
       config = %__MODULE__{
-        files: resolve_files(opts, app),
+        files: files,
         test_paths: resolve_test_paths(opts, app),
         app: app,
+        project_root: project_root,
         language: language,
         mutators: mutators,
         concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
-        timeout_ms: Keyword.get(opts, :timeout, 5000),
-        fail_at: Keyword.get(opts, :fail_at, 100),
+        timeout_ms: Keyword.get(opts, :timeout, 10_000),
+        fail_at: Keyword.get(opts, :fail_at, 80),
         format: Keyword.get(opts, :format, "terminal"),
         min_score: Keyword.get(opts, :min_score, 20),
         max_mutations: Keyword.get(opts, :max_mutations, 0),
@@ -368,5 +375,32 @@ defmodule Muex.Config do
 
   defp validate_optimize_level(other) do
     {:error, "Unknown optimization level: #{other}. Use conservative, balanced, or aggressive"}
+  end
+
+  # Detect the project root from an explicit option or by walking up from
+  # the first --files path to find the nearest mix.exs.
+  defp resolve_project_root(nil, files) do
+    first_path = List.first(files) || "lib"
+    find_mix_project_root(Path.expand(first_path))
+  end
+
+  defp resolve_project_root(explicit, _files), do: Path.expand(explicit)
+
+  defp find_mix_project_root(path) do
+    # If `path` is a file, start from its parent directory
+    dir = if File.dir?(path), do: path, else: Path.dirname(path)
+
+    if File.regular?(Path.join(dir, "mix.exs")) do
+      dir
+    else
+      parent = Path.dirname(dir)
+
+      if parent == dir do
+        # Reached filesystem root — fall back to CWD
+        File.cwd!()
+      else
+        find_mix_project_root(parent)
+      end
+    end
   end
 end

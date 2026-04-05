@@ -31,7 +31,8 @@ defmodule Muex.Reporter.JsonTest do
       assert summary["survived"] == 1
       assert summary["invalid"] == 0
       assert summary["timeout"] == 0
-      assert summary["mutation_score"] == 50.0
+      assert summary["mutation_score_low"] == 50.0
+      assert summary["mutation_score_high"] == 50.0
       assert length(mutations) == 2
     end
 
@@ -92,7 +93,8 @@ defmodule Muex.Reporter.JsonTest do
       json = Json.to_json(results)
       report = Jason.decode!(json)
 
-      assert report["summary"]["mutation_score"] == 75.0
+      assert report["summary"]["mutation_score_low"] == 75.0
+      assert report["summary"]["mutation_score_high"] == 75.0
     end
 
     test "handles empty results" do
@@ -100,7 +102,8 @@ defmodule Muex.Reporter.JsonTest do
       report = Jason.decode!(json)
 
       assert report["summary"]["total"] == 0
-      assert report["summary"]["mutation_score"] == 0.0
+      assert report["summary"]["mutation_score_low"] == 0.0
+      assert report["summary"]["mutation_score_high"] == 0.0
       assert report["mutations"] == []
     end
   end

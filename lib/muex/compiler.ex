@@ -57,6 +57,23 @@ defmodule Muex.Compiler do
   end
 
   @doc """
+  Generates the mutated source code string without writing to disk.
+
+  This is preferred over `compile_to_file/3` when the caller only needs the
+  source string (e.g. to write into a sandbox).
+
+  ## Returns
+
+    - `{:ok, source_string}` - The mutated source code
+    - `{:error, reason}` - AST-to-source conversion failed
+  """
+  @spec compile_to_source(map(), map(), module()) :: {:ok, String.t()} | {:error, term()}
+  def compile_to_source(mutation, file_entry, language_adapter) do
+    mutated_full_ast = apply_mutation(file_entry.ast, mutation)
+    language_adapter.unparse(mutated_full_ast)
+  end
+
+  @doc """
   Restores the original module from its binary.
 
   ## Parameters

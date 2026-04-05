@@ -30,11 +30,17 @@ defmodule Muex.Reporter do
     invalid = Enum.count(results, &(&1.result == :invalid))
     timeout = Enum.count(results, &(&1.result == :timeout))
 
-    mutation_score =
-      if total > 0 do
-        Float.round(killed / total * 100, 2)
+    # Invalids are excluded: they say nothing about test quality.
+    # Timeouts are ambiguous -- could be killed or survived.
+    denom = killed + survived + timeout
+
+    {score_low, score_high} =
+      if denom > 0 do
+        low = Float.round(killed / denom * 100, 2)
+        high = Float.round((killed + timeout) / denom * 100, 2)
+        {low, high}
       else
-        0.0
+        {0.0, 0.0}
       end
 
     IO.puts("\n")
@@ -49,12 +55,19 @@ defmodule Muex.Reporter do
 
     score_color =
       cond do
-        mutation_score >= 80 -> @green
-        mutation_score >= 60 -> @yellow
+        score_low >= 80 -> @green
+        score_low >= 60 -> @yellow
         true -> @red
       end
 
-    IO.puts("#{@bold}Mutation Score: #{score_color}#{mutation_score}%#{@reset}")
+    score_str =
+      if score_low == score_high do
+        "#{score_low}%"
+      else
+        "#{score_low}%..#{score_high}%"
+      end
+
+    IO.puts("#{@bold}Mutation Score: #{score_color}#{score_str}#{@reset}")
     IO.puts("\n")
 
     if survived > 0 do

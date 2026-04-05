@@ -52,11 +52,13 @@ defmodule Muex.Reporter.Json do
     invalid = Enum.count(results, &(&1.result == :invalid))
     timeout = Enum.count(results, &(&1.result == :timeout))
 
-    mutation_score =
-      if total > 0 do
-        Float.round(killed / total * 100, 2)
+    denom = killed + survived + timeout
+
+    {score_low, score_high} =
+      if denom > 0 do
+        {Float.round(killed / denom * 100, 2), Float.round((killed + timeout) / denom * 100, 2)}
       else
-        0.0
+        {0.0, 0.0}
       end
 
     %{
@@ -66,7 +68,8 @@ defmodule Muex.Reporter.Json do
         survived: survived,
         invalid: invalid,
         timeout: timeout,
-        mutation_score: mutation_score
+        mutation_score_low: score_low,
+        mutation_score_high: score_high
       },
       mutations: Enum.map(results, &format_mutation/1)
     }

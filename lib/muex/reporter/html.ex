@@ -34,11 +34,15 @@ defmodule Muex.Reporter.Html do
     invalid = Enum.count(results, &(&1.result == :invalid))
     timeout = Enum.count(results, &(&1.result == :timeout))
 
-    mutation_score =
-      if total > 0 do
-        Float.round(killed / total * 100, 2)
+    denom = killed + survived + timeout
+
+    score_str =
+      if denom > 0 do
+        low = Float.round(killed / denom * 100, 2)
+        high = Float.round((killed + timeout) / denom * 100, 2)
+        if low == high, do: "#{low}%", else: "#{low}%..#{high}%"
       else
-        0.0
+        "0.0%"
       end
 
     """
@@ -214,7 +218,7 @@ defmodule Muex.Reporter.Html do
           </div>
           <div class="summary-card score">
             <div class="summary-label">Mutation Score</div>
-            <div class="summary-number">#{mutation_score}%</div>
+            <div class="summary-number">#{score_str}</div>
           </div>
         </div>
 

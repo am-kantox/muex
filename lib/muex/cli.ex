@@ -52,9 +52,18 @@ defmodule Muex.CLI do
         Mix.Task.run("compile", ["--no-deps-check"])
 
         case Muex.run(config) do
-          {:ok, %{score: score}} ->
-            if score < config.fail_at do
-              IO.puts(:stderr, "Mutation score #{score}% is below threshold #{config.fail_at}%")
+          {:ok, %{score_low: score_low, score_high: score_high}} ->
+            if score_low < config.fail_at do
+              score_str =
+                if score_low == score_high,
+                  do: "#{score_low}%",
+                  else: "#{score_low}%..#{score_high}%"
+
+              IO.puts(
+                :stderr,
+                "Mutation score #{score_str} is below threshold #{config.fail_at}%"
+              )
+
               System.halt(1)
             end
 
@@ -86,8 +95,8 @@ defmodule Muex.CLI do
         --mutators <list>           Comma-separated mutators (default: all)
         --mutator-paths <dirs>      Comma-separated dirs with custom mutators
         --concurrency <n>           Parallel mutations (default: CPU cores)
-        --timeout <ms>              Test timeout in milliseconds (default: 5000)
-        --fail-at <score>           Minimum mutation score to pass (default: 100)
+        --timeout <ms>              Test timeout in milliseconds (default: 10000)
+        --fail-at <score>           Minimum mutation score to pass (default: 80)
         --format <type>             Output format: terminal, json, html (default: terminal)
         --min-score <score>         Minimum complexity score for files (default: 20)
         --max-mutations <n>         Maximum mutations to test (default: unlimited)

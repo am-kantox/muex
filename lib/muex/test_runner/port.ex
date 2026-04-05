@@ -70,6 +70,7 @@ defmodule Muex.TestRunner.Port do
         ["--no-deps-check", "--no-archives-check"]
       end
 
+    mix_path = System.find_executable("mix")
     args = ["test"] ++ compile_flags ++ test_files
 
     current_env =
@@ -87,7 +88,6 @@ defmodule Muex.TestRunner.Port do
       |> maybe_add_cd(cd)
 
     try do
-      mix_path = System.find_executable("mix")
       port = Port.open({:spawn_executable, mix_path}, port_opts)
       collect_output(port, "", timeout_ms)
     rescue
@@ -121,18 +121,41 @@ defmodule Muex.TestRunner.Port do
     e -> {:error, e}
   end
 
-  # Kill the OS process spawned by the port to prevent orphaned
-  # `mix test` processes from accumulating on timeout. Note: this only
-  # targets the main process, not any children it may have spawned.
+  # Kill the OS process and its entire process tree. `mix test` spawns a
+  # child beam.smp process; killing only the parent leaves the child orphaned.
+  # We walk the child-process tree (via `pkill -P`) before killing the root.
   defp kill_os_process(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, os_pid} ->
-        System.cmd("kill", ["-9", "#{os_pid}"], stderr_to_stdout: true)
+        kill_process_tree(os_pid)
 
       nil ->
-        # Port already closed or process already exited
         :ok
     end
+  rescue
+    _ -> :ok
+  end
+
+  # Recursively kill all descendants of `pid`, then kill `pid` itself.
+  defp kill_process_tree(pid) do
+    # Find direct children
+    {children_str, _} = System.cmd("pgrep", ["-P", "#{pid}"], stderr_to_stdout: true)
+
+    child_pids =
+      children_str
+      |> String.split("\n", trim: true)
+      |> Enum.flat_map(fn s ->
+        case Integer.parse(s) do
+          {n, _} -> [n]
+          :error -> []
+        end
+      end)
+
+    # Kill children first (depth-first)
+    Enum.each(child_pids, &kill_process_tree/1)
+
+    # Now kill this process
+    System.cmd("kill", ["-9", "#{pid}"], stderr_to_stdout: true)
   rescue
     _ -> :ok
   end

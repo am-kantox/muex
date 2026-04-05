@@ -84,9 +84,12 @@ defmodule Muex do
 
     case Muex.Loader.load_all(config.files, config.language) do
       {:ok, []} ->
-        {:ok, %{results: [], score: 0.0}}
+        {:ok, %{results: [], score_low: 0.0, score_high: 0.0}}
 
       {:ok, [_ | _] = all_files} ->
+        # Normalize file paths to be relative to the project root so that
+        # downstream code (sandbox, PortRunner) can join them correctly.
+        all_files = relativize_file_entries(all_files, config.project_root)
         log("Found #{length(all_files)} file(s)", config.verbose)
         do_run(config, all_files)
     end
@@ -107,7 +110,7 @@ defmodule Muex do
       |> maybe_cap(config)
 
     if all_mutations == [] do
-      {:ok, %{results: [], score: 0.0}}
+      {:ok, %{results: [], score_low: 0.0, score_high: 0.0}}
     else
       run_mutations(config, files, all_mutations)
     end
@@ -161,7 +164,12 @@ defmodule Muex do
     log("Testing #{length(all_mutations)} mutation(s)", config.verbose)
     log("Analyzing test dependencies...", config.verbose)
 
-    dependency_map = Muex.DependencyAnalyzer.analyze(config.test_paths)
+    # Make test paths absolute so DependencyAnalyzer and the worker pool
+    # can find files on disk regardless of CWD. Config stores them as-is
+    # (relative or absolute) — we absolutize here, once.
+    abs_test_paths = absolutize_paths(config.test_paths, config.project_root)
+
+    dependency_map = Muex.DependencyAnalyzer.analyze(abs_test_paths)
     file_entries = Map.new(files, fn file -> {file.path, file} end)
     file_to_module = Map.new(files, fn file -> {file.path, file.module_name} end)
 
@@ -181,7 +189,8 @@ defmodule Muex do
         max_workers: config.concurrency,
         timeout_ms: config.timeout_ms,
         verbose: config.verbose,
-        test_paths: config.test_paths
+        test_paths: abs_test_paths,
+        project_root: config.project_root
       )
 
     case output_report(results, config.format, config.verbose) do
@@ -191,17 +200,26 @@ defmodule Muex do
   end
 
   defp build_result(results) do
-    total = length(results)
     killed = Enum.count(results, &(&1.result == :killed))
+    survived = Enum.count(results, &(&1.result == :survived))
+    timeout = Enum.count(results, &(&1.result == :timeout))
 
-    score =
-      if total > 0 do
-        Float.round(killed / total * 100, 2)
+    # Invalids are excluded: they tell us nothing about test quality.
+    # Timeouts are ambiguous -- they could be killed or survived.
+    denom = killed + survived + timeout
+
+    {score_low, score_high} =
+      if denom > 0 do
+        # Low bound (pessimistic): assume all timeouts survived
+        low = Float.round(killed / denom * 100, 2)
+        # High bound (optimistic): assume all timeouts were killed
+        high = Float.round((killed + timeout) / denom * 100, 2)
+        {low, high}
       else
-        0.0
+        {0.0, 0.0}
       end
 
-    {:ok, %{results: results, score: score}}
+    {:ok, %{results: results, score_low: score_low, score_high: score_high}}
   end
 
   defp output_report(results, "json", _verbose) do
@@ -219,6 +237,30 @@ defmodule Muex do
 
   defp output_report(_results, other, _verbose) do
     {:error, "Unknown format: #{other}. Use terminal, json, or html"}
+  end
+
+  # Convert relative paths to absolute, anchored at `root`.
+  defp absolutize_paths(paths, root) do
+    Enum.map(paths, fn path ->
+      case Path.type(path) do
+        :absolute -> path
+        _ -> Path.join(root, path)
+      end
+    end)
+  end
+
+  # Make all file paths relative to the project root. This is essential
+  # when --path points to an external project: the Loader returns absolute
+  # paths, but the sandbox expects paths relative to its project root.
+  defp relativize_file_entries(files, project_root) do
+    Enum.map(files, fn file ->
+      relative_path =
+        file.path
+        |> Path.expand()
+        |> Path.relative_to(project_root)
+
+      %{file | path: relative_path}
+    end)
   end
 
   defp log(msg, verbose \\ true) do

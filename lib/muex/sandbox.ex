@@ -92,11 +92,11 @@ defmodule Muex.Sandbox do
 
   @doc """
   Applies a mutation to a sandbox by writing the mutated source to the
-  sandbox's copy of the file, and pre-compiling the beam when possible
-  so `mix test` can skip recompilation.
+  sandbox's copy of the file, and deleting the stale beam so the child
+  `mix test` process recompiles it.
 
-  Returns `{:ok, precompiled?}` where `precompiled?` indicates whether the
-  mutated module's beam was written directly, or `{:error, reason}`.
+  Returns `{:ok, false}` on success (the child always recompiles), or
+  `{:error, reason}`.
   """
   @spec apply_mutation(sandbox(), Path.t(), String.t(), atom() | nil) ::
           {:ok, boolean()} | {:error, term()}
@@ -117,41 +117,18 @@ defmodule Muex.Sandbox do
 
     case File.write(sandbox_path, mutated_source) do
       :ok ->
-        precompiled =
-          if module_name do
-            beam_pattern = Path.join([sandbox.root, "_build", "**", "#{module_name}.beam"])
-            beam_paths = Path.wildcard(beam_pattern)
+        # Delete the stale .beam so the child `mix test` process detects
+        # the source change and recompiles the module. Pre-compiling via
+        # Code.compile_string in the parent VM is not viable: modules with
+        # compile-time dependencies (use, import, structs) fail, and
+        # successful compilations pollute the parent's module state.
+        if module_name do
+          beam_pattern = Path.join([sandbox.root, "_build", "**", "#{module_name}.beam"])
+          beam_paths = Path.wildcard(beam_pattern)
+          Enum.each(beam_paths, &File.rm/1)
+        end
 
-            # Try to pre-compile the mutated module and write the .beam directly,
-            # so the child `mix test` process finds an up-to-date beam and skips
-            # recompilation. This avoids the expensive dependency-graph walk that
-            # Mix performs in umbrella projects when it detects a stale module.
-            compiled =
-              try do
-                case Code.compile_string(mutated_source, sandbox_path) do
-                  [{_mod, binary}] ->
-                    Enum.each(beam_paths, fn path -> File.write!(path, binary) end)
-                    true
-
-                  _ ->
-                    false
-                end
-              rescue
-                _ -> false
-              end
-
-            # Fallback: if pre-compilation failed, delete the beam so the child
-            # process recompiles (original behavior).
-            if not compiled do
-              Enum.each(beam_paths, &File.rm/1)
-            end
-
-            compiled
-          else
-            false
-          end
-
-        {:ok, precompiled}
+        {:ok, false}
 
       {:error, reason} ->
         {:error, reason}
@@ -276,8 +253,11 @@ defmodule Muex.Sandbox do
 
   defp link_test_paths(root, project_root, test_paths) do
     for test_path <- test_paths do
-      source = Path.join(project_root, test_path)
-      target = Path.join(root, test_path)
+      # Test paths may be absolute (resolved against project_root by Config).
+      # Relativize so the target inside the sandbox is correct.
+      relative_path = Path.relative_to(test_path, project_root)
+      source = Path.join(project_root, relative_path)
+      target = Path.join(root, relative_path)
 
       cond do
         File.dir?(source) ->
@@ -334,7 +314,7 @@ defmodule Muex.Sandbox do
   end
 
   defp ensure_app_mirrored_for_file(sandbox, file_path) do
-    case extract_app_name_from_path(file_path) do
+    case extract_app_name_from_path(file_path, sandbox.project_root) do
       nil -> :ok
       app_name -> ensure_app_mirrored(sandbox, app_name)
     end
@@ -344,11 +324,11 @@ defmodule Muex.Sandbox do
   # name ("supply_chain") and ensure its _build/test/lib/<app> directory
   # is a real deep copy (not a symlink) so we can delete its beam files.
   defp ensure_build_copy_for_file(sandbox, file_path) do
-    app_name = extract_app_name_from_path(file_path)
+    app_name = extract_app_name_from_path(file_path, sandbox.project_root)
     if app_name, do: ensure_build_copy(sandbox, app_name)
   end
 
-  defp extract_app_name_from_path(file_path) do
+  defp extract_app_name_from_path(file_path, project_root) do
     # Canonicalize: strip leading ./ and make relative so Path.split
     # always produces ["apps", app_name, ...] for umbrella paths.
     # Handles ./apps/foo/..., /abs/path/apps/foo/..., and apps/foo/...
@@ -373,16 +353,25 @@ defmodule Muex.Sandbox do
 
     case Path.split(normalized) do
       ["apps", app_name | _] -> app_name
-      ["lib" | _] -> detect_app_from_build()
+      ["lib" | _] -> detect_app_from_build(project_root)
       _ -> nil
     end
   end
 
-  defp detect_app_from_build do
-    # For non-umbrella projects, find the app name from _build
-    case Path.wildcard("_build/test/lib/*/.mix/compile.elixir") do
-      [path | _] -> path |> Path.split() |> Enum.at(3)
-      [] -> nil
+  defp detect_app_from_build(project_root) do
+    # For non-umbrella projects, find the app name from _build.
+    # Use the project root (not CWD) so this works for external projects.
+    pattern = Path.join([project_root, "_build", "test", "lib", "*", ".mix", "compile.elixir"])
+
+    case Path.wildcard(pattern, match_dot: true) do
+      [path | _] ->
+        path
+        |> Path.relative_to(project_root)
+        |> Path.split()
+        |> Enum.at(3)
+
+      [] ->
+        nil
     end
   end
 

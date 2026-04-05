@@ -15,8 +15,8 @@ defmodule Muex.ConfigTest do
       assert config.optimize == true
       assert config.optimize_level == "balanced"
       assert config.format == "terminal"
-      assert config.fail_at == 100
-      assert config.timeout_ms == 5000
+      assert config.fail_at == 80
+      assert config.timeout_ms == 10_000
       assert config.max_mutations == 0
       assert config.min_score == 20
       assert config.min_complexity == nil

@@ -30,6 +30,8 @@ defmodule Muex.WorkerPool do
       :caller,
       :total_mutations,
       :opts,
+      # Root of the project under test (may differ from CWD)
+      project_root: nil,
       # Expanded test file paths (resolved once at run start)
       test_paths: ["test"],
       # Map of file_path => :queue.queue(mutation)
@@ -158,10 +160,11 @@ defmodule Muex.WorkerPool do
     else
       # Create sandboxes for parallel workers
       test_paths = Keyword.get(opts, :test_paths, ["test"])
+      project_root = Keyword.get(opts, :project_root, File.cwd!())
 
       sandboxes =
         Sandbox.create_pool(state.max_workers,
-          project_root: File.cwd!(),
+          project_root: project_root,
           test_paths: test_paths
         )
 
@@ -185,6 +188,7 @@ defmodule Muex.WorkerPool do
           language_adapter: language_adapter,
           dependency_map: dependency_map,
           file_to_module: file_to_module,
+          project_root: project_root,
           test_paths: test_paths,
           opts: opts,
           caller: from,
@@ -433,23 +437,23 @@ defmodule Muex.WorkerPool do
         test_files
       end
 
-    result =
-      case Compiler.compile_to_file(mutation, file_entry, state.language_adapter) do
-        {:ok, mutated_file} ->
-          {:ok, mutated_source} = File.read(mutated_file)
-          File.rm!(mutated_file)
+    # Convert test file paths to be relative to the project root so they
+    # resolve correctly when `mix test` runs inside the sandbox.
+    test_files = relativize_paths(test_files, state.project_root)
 
+    result =
+      case Compiler.compile_to_source(mutation, file_entry, state.language_adapter) do
+        {:ok, mutated_source} ->
           # Apply the mutation to the sandbox (not the real project)
           case Sandbox.apply_mutation(sandbox, file_path, mutated_source, file_entry.module_name) do
-            {:ok, precompiled} ->
+            {:ok, _precompiled} ->
               # Wrap in try/after so the sandbox is always restored,
               # even if PortRunner.run_tests raises an exception.
               try do
                 test_result =
                   PortRunner.run_tests(test_files,
                     timeout_ms: timeout_ms,
-                    cd: sandbox.root,
-                    no_compile: precompiled
+                    cd: sandbox.root
                   )
 
                 classify_test_result(test_result)
@@ -484,6 +488,12 @@ defmodule Muex.WorkerPool do
   defp classify_test_result({:ok, %{failures: _}}), do: :killed
   defp classify_test_result({:error, :timeout}), do: :timeout
   defp classify_test_result({:error, _}), do: :invalid
+
+  # Convert absolute test file paths to relative so `mix test` (running in
+  # the sandbox, which mirrors the project root) can resolve them.
+  defp relativize_paths(paths, project_root) do
+    Enum.map(paths, &Path.relative_to(&1, project_root))
+  end
 
   @impl true
   def terminate(_reason, state) do

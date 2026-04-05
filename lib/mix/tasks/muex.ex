@@ -15,8 +15,8 @@ defmodule Mix.Tasks.Muex do
     * `--language` - Language adapter to use (default: "elixir")
     * `--mutators` - Comma-separated list of mutators (default: all)
     * `--concurrency` - Number of parallel mutations (default: number of schedulers)
-    * `--timeout` - Test timeout in milliseconds (default: 5000)
-    * `--fail-at` - Minimum mutation score to pass (default: 100)
+    * `--timeout` - Test timeout in milliseconds (default: 10000)
+    * `--fail-at` - Minimum mutation score to pass (default: 80)
     * `--format` - Output format: terminal, json, html (default: terminal)
     * `--min-score` - Minimum complexity score for files to include (default: 20)
     * `--max-mutations` - Maximum number of mutations to test (0 = unlimited, default: 0)
@@ -59,9 +59,16 @@ defmodule Mix.Tasks.Muex do
           {:error, reason} ->
             Mix.raise(reason)
 
-          {:ok, %{score: score}} ->
-            if score < config.fail_at do
-              Mix.raise("Mutation score #{score}% is below threshold #{config.fail_at}%")
+          {:ok, %{score_low: score_low, score_high: score_high}} ->
+            # Use the pessimistic (low) bound for threshold comparison.
+            # If even the best-case interpretation fails, the score is too low.
+            if score_low < config.fail_at do
+              score_str =
+                if score_low == score_high,
+                  do: "#{score_low}%",
+                  else: "#{score_low}%..#{score_high}%"
+
+              Mix.raise("Mutation score #{score_str} is below threshold #{config.fail_at}%")
             end
         end
     end
