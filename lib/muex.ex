@@ -81,12 +81,13 @@ defmodule Muex do
   @spec run(Muex.Config.t()) :: {:ok, map()} | {:error, String.t()}
   def run(%Muex.Config{} = config) do
     original_cwd = File.cwd!()
+    target_root = find_project_root(config.files)
 
-    case clone_project(original_cwd) do
+    case clone_project(target_root) do
       {:ok, workspace} ->
         try do
           File.cd!(workspace)
-          adjusted_config = relativize_config(config, original_cwd)
+          adjusted_config = relativize_config(config, target_root)
           run_pipeline(adjusted_config)
         after
           File.cd!(original_cwd)
@@ -288,6 +289,20 @@ defmodule Muex do
       if relative == path, do: path, else: relative
     else
       path
+    end
+  end
+
+  defp find_project_root(files_path) do
+    files_path |> Path.expand() |> do_find_project_root()
+  end
+
+  defp do_find_project_root(path) do
+    dir = if File.dir?(path), do: path, else: Path.dirname(path)
+
+    cond do
+      File.regular?(Path.join(dir, "mix.exs")) -> dir
+      dir == Path.dirname(dir) -> File.cwd!()
+      true -> do_find_project_root(Path.dirname(dir))
     end
   end
 end
