@@ -58,7 +58,7 @@ defmodule Muex.TestRunner.Port do
     # `mix test` does incremental compilation automatically. The worker pool
     # already deleted the .beam file for the mutated module, so Mix will detect
     # the changed source and recompile just that one module. Using `compile --force`
-    # here would recompile the entire project per mutation — catastrophic in umbrellas.
+    # here would recompile the entire project -- catastrophic in umbrellas.
     args = ["test" | test_files]
 
     current_env =

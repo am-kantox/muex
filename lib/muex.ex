@@ -80,6 +80,25 @@ defmodule Muex do
   """
   @spec run(Muex.Config.t()) :: {:ok, map()} | {:error, String.t()}
   def run(%Muex.Config{} = config) do
+    original_cwd = File.cwd!()
+
+    case clone_project(original_cwd) do
+      {:ok, workspace} ->
+        try do
+          File.cd!(workspace)
+          adjusted_config = relativize_config(config, original_cwd)
+          run_pipeline(adjusted_config)
+        after
+          File.cd!(original_cwd)
+          File.rm_rf!(workspace)
+        end
+
+      {:error, reason} ->
+        {:error, "Failed to create temporary workspace: #{inspect(reason)}"}
+    end
+  end
+
+  defp run_pipeline(config) do
     log("Loading files from #{config.files}...", config.verbose)
 
     case Muex.Loader.load(config.files, config.language) do
@@ -231,6 +250,38 @@ defmodule Muex do
       else
         IO.puts(msg)
       end
+    end
+  end
+
+  @skip_dirs ~w(.git .elixir_ls .lexical)
+
+  defp clone_project(project_root) do
+    workspace = Path.join(System.tmp_dir!(), "muex_#{:rand.uniform(999_999_999)}")
+
+    case File.cp_r(project_root, workspace, fn src, _dst ->
+           Path.basename(src) not in @skip_dirs
+         end) do
+      {:ok, _} -> {:ok, workspace}
+      {:error, reason, _file} -> {:error, reason}
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  defp relativize_config(config, original_root) do
+    %{
+      config
+      | files: relativize_path(config.files, original_root),
+        test_paths: Enum.map(config.test_paths, &relativize_path(&1, original_root))
+    }
+  end
+
+  defp relativize_path(path, project_root) do
+    if Path.type(path) == :absolute do
+      relative = Path.relative_to(path, project_root)
+      if relative == path, do: path, else: relative
+    else
+      path
     end
   end
 end
