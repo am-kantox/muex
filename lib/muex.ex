@@ -90,7 +90,10 @@ defmodule Muex do
           run_pipeline(adjusted_config)
         after
           File.cd!(original_cwd)
-          File.rm_rf!(workspace)
+
+          with {:error, reason, _} <- File.rm_rf(workspace) do
+            log("The target directory failed to cleanup completely. Error: " <> inspect(reason))
+          end
         end
 
       {:error, reason} ->
@@ -257,13 +260,16 @@ defmodule Muex do
 
   defp clone_project(project_root) do
     workspace = Path.join(System.tmp_dir!(), "muex_#{:rand.uniform(999_999_999)}")
+    File.mkdir_p!(workspace)
 
-    case File.cp_r(project_root, workspace, fn src, _dst ->
-           Path.basename(src) not in @skip_dirs
-         end) do
-      {:ok, _} -> {:ok, workspace}
-      {:error, reason, _file} -> {:error, reason}
-    end
+    project_root
+    |> File.ls!()
+    |> Enum.reject(&(&1 in @skip_dirs))
+    |> Enum.each(fn entry ->
+      File.cp_r!(Path.join(project_root, entry), Path.join(workspace, entry))
+    end)
+
+    {:ok, workspace}
   rescue
     e -> {:error, e}
   end
